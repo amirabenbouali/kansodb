@@ -194,4 +194,56 @@ LIMIT 5;`;
       TokenType.Semicolon
     ]);
   });
+
+  it("tokenizes CREATE TABLE keywords", () => {
+    expect(withoutEof(tokenize("CREATE TABLE employees")).map((token) => token.type)).toEqual([
+      TokenType.Create,
+      TokenType.Table,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("tokenizes INSERT INTO keywords", () => {
+    expect(withoutEof(tokenize("INSERT INTO employees")).map((token) => token.type)).toEqual([
+      TokenType.Insert,
+      TokenType.Into,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("tokenizes VALUES", () => {
+    expect(withoutEof(tokenize("VALUES (1)")).map((token) => token.type)).toEqual([
+      TokenType.Values,
+      TokenType.LeftParen,
+      TokenType.Integer,
+      TokenType.RightParen
+    ]);
+  });
+
+  it("tokenizes data-type keywords", () => {
+    expect(withoutEof(tokenize("INTEGER DECIMAL TEXT BOOLEAN")).map((token) => token.type)).toEqual([
+      TokenType.IntegerType,
+      TokenType.DecimalType,
+      TokenType.TextType,
+      TokenType.BooleanType
+    ]);
+  });
+
+  it("tokenizes NOT NULL", () => {
+    expect(withoutEof(tokenize("NOT NULL")).map((token) => token.type)).toEqual([TokenType.Not, TokenType.Null]);
+  });
+
+  it("tokenizes lowercase and mixed-case DDL/DML keywords", () => {
+    expect(withoutEof(tokenize("create TaBlE insert InTo values integer text not null")).map((token) => token.type)).toEqual([
+      TokenType.Create,
+      TokenType.Table,
+      TokenType.Insert,
+      TokenType.Into,
+      TokenType.Values,
+      TokenType.IntegerType,
+      TokenType.TextType,
+      TokenType.Not,
+      TokenType.Null
+    ]);
+  });
 });

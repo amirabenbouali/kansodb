@@ -2,16 +2,21 @@ import type {
   ColumnReference,
   ComparisonExpression,
   ComparisonOperator,
+  CreateColumnDataType,
+  CreateColumnDefinition,
+  CreateTableStatement,
   Expression,
+  InsertStatement,
   LiteralExpression,
   LogicalExpression,
   LogicalOperator,
   OrderByClause,
   SelectColumn,
   SelectStatement,
+  Statement,
   TableReference
 } from "./ast.js";
-import { ParserError } from "./parser-error.js";
+import { ParserError } from "../errors/parser-error.js";
 import type { Token } from "../lexer/token.js";
 import { TokenType } from "../lexer/token.js";
 
@@ -23,8 +28,24 @@ export class Parser {
     this.tokens = tokens;
   }
 
-  public parse(): SelectStatement {
-    return this.parseSelectStatement();
+  public parse(): Statement {
+    if (this.check(TokenType.Select)) {
+      return this.parseSelectStatement();
+    }
+
+    if (this.check(TokenType.Create)) {
+      return this.parseCreateTableStatement();
+    }
+
+    if (this.check(TokenType.Insert)) {
+      return this.parseInsertStatement();
+    }
+
+    throw new ParserError("Expected a supported SQL statement", this.peek(), [
+      TokenType.Select,
+      TokenType.Create,
+      TokenType.Insert
+    ]);
   }
 
   public parseSelectStatement(): SelectStatement {
@@ -48,11 +69,90 @@ export class Parser {
       statement.limit = this.parseLimitValue();
     }
 
-    if (this.match(TokenType.Semicolon) && this.check(TokenType.Semicolon)) {
-      throw new ParserError("Only one trailing semicolon is allowed", this.peek());
+    this.finishStatement("Unexpected token after complete SELECT statement");
+    return statement;
+  }
+
+  public parseCreateTableStatement(): CreateTableStatement {
+    this.consume(TokenType.Create, "Expected CREATE to start a create table statement");
+    this.consume(TokenType.Table, "Expected TABLE after CREATE");
+    const tableName = this.consume(TokenType.Identifier, "Expected table name after CREATE TABLE");
+    this.consume(TokenType.LeftParen, "Expected opening parenthesis before column definitions");
+
+    if (this.check(TokenType.RightParen)) {
+      throw new ParserError("Expected at least one column definition", this.peek(), [TokenType.Identifier]);
     }
 
-    this.consume(TokenType.Eof, "Unexpected token after complete SELECT statement");
+    const columns = [this.parseCreateColumnDefinition()];
+
+    while (this.match(TokenType.Comma)) {
+      if (this.check(TokenType.RightParen)) {
+        throw new ParserError("Expected column definition after comma", this.peek(), [TokenType.Identifier]);
+      }
+
+      columns.push(this.parseCreateColumnDefinition());
+    }
+
+    this.consume(TokenType.RightParen, "Expected closing parenthesis after column definitions");
+    this.finishStatement("Unexpected token after complete CREATE TABLE statement");
+
+    return {
+      type: "create_table",
+      tableName: tableName.lexeme,
+      columns
+    };
+  }
+
+  public parseInsertStatement(): InsertStatement {
+    this.consume(TokenType.Insert, "Expected INSERT to start an insert statement");
+    this.consume(TokenType.Into, "Expected INTO after INSERT");
+    const tableName = this.consume(TokenType.Identifier, "Expected table name after INSERT INTO");
+    const columns = this.check(TokenType.LeftParen) ? this.parseInsertColumns() : undefined;
+
+    this.consume(TokenType.Values, "Expected VALUES in INSERT statement");
+    this.consume(TokenType.LeftParen, "Expected opening parenthesis before VALUES list");
+
+    if (this.check(TokenType.RightParen)) {
+      throw new ParserError("Expected at least one value", this.peek(), [
+        TokenType.Integer,
+        TokenType.Decimal,
+        TokenType.String,
+        TokenType.True,
+        TokenType.False,
+        TokenType.Null
+      ]);
+    }
+
+    const values = [this.parseLiteral("Expected value in VALUES list")];
+
+    while (this.match(TokenType.Comma)) {
+      if (this.check(TokenType.RightParen)) {
+        throw new ParserError("Expected value after comma in VALUES list", this.peek(), [
+          TokenType.Integer,
+          TokenType.Decimal,
+          TokenType.String,
+          TokenType.True,
+          TokenType.False,
+          TokenType.Null
+        ]);
+      }
+
+      values.push(this.parseLiteral("Expected value after comma in VALUES list"));
+    }
+
+    this.consume(TokenType.RightParen, "Expected closing parenthesis after VALUES list");
+    this.finishStatement("Unexpected token after complete INSERT statement");
+
+    const statement: InsertStatement = {
+      type: "insert",
+      tableName: tableName.lexeme,
+      values
+    };
+
+    if (columns !== undefined) {
+      statement.columns = columns;
+    }
+
     return statement;
   }
 
@@ -130,6 +230,85 @@ export class Parser {
       type: "column",
       name: token.lexeme
     };
+  }
+
+  private parseCreateColumnDefinition(): CreateColumnDefinition {
+    const name = this.consume(TokenType.Identifier, "Expected column name in column definition");
+    const dataType = this.parseDataType();
+    const nullable = this.parseNullability();
+
+    return {
+      name: name.lexeme,
+      dataType,
+      nullable
+    };
+  }
+
+  private parseDataType(): CreateColumnDataType {
+    if (this.match(TokenType.IntegerType)) {
+      return "INTEGER";
+    }
+
+    if (this.match(TokenType.DecimalType)) {
+      return "DECIMAL";
+    }
+
+    if (this.match(TokenType.TextType)) {
+      return "TEXT";
+    }
+
+    if (this.match(TokenType.BooleanType)) {
+      return "BOOLEAN";
+    }
+
+    throw new ParserError("Expected column type", this.peek(), [
+      TokenType.IntegerType,
+      TokenType.DecimalType,
+      TokenType.TextType,
+      TokenType.BooleanType
+    ]);
+  }
+
+  private parseNullability(): boolean {
+    if (this.match(TokenType.Null)) {
+      this.rejectAdditionalNullability();
+      return true;
+    }
+
+    if (this.match(TokenType.Not)) {
+      this.consume(TokenType.Null, "Expected NULL after NOT");
+      this.rejectAdditionalNullability();
+      return false;
+    }
+
+    return false;
+  }
+
+  private rejectAdditionalNullability(): void {
+    if (this.check(TokenType.Null) || this.check(TokenType.Not)) {
+      throw new ParserError("Conflicting nullability modifier", this.peek(), [TokenType.Comma, TokenType.RightParen]);
+    }
+  }
+
+  private parseInsertColumns(): string[] {
+    this.consume(TokenType.LeftParen, "Expected opening parenthesis before INSERT column list");
+
+    if (this.check(TokenType.RightParen)) {
+      throw new ParserError("Expected column name in INSERT column list", this.peek(), [TokenType.Identifier]);
+    }
+
+    const columns = [this.consume(TokenType.Identifier, "Expected column name in INSERT column list").lexeme];
+
+    while (this.match(TokenType.Comma)) {
+      if (this.check(TokenType.RightParen)) {
+        throw new ParserError("Expected column name after comma in INSERT column list", this.peek(), [TokenType.Identifier]);
+      }
+
+      columns.push(this.consume(TokenType.Identifier, "Expected column name after comma in INSERT column list").lexeme);
+    }
+
+    this.consume(TokenType.RightParen, "Expected closing parenthesis after INSERT column list");
+    return columns;
   }
 
   private parseComparisonOperator(): ComparisonOperator {
@@ -227,6 +406,14 @@ export class Parser {
       left,
       right
     };
+  }
+
+  private finishStatement(message: string): void {
+    if (this.match(TokenType.Semicolon) && this.check(TokenType.Semicolon)) {
+      throw new ParserError("Only one trailing semicolon is allowed", this.peek());
+    }
+
+    this.consume(TokenType.Eof, message);
   }
 
   private match(...types: TokenType[]): boolean {

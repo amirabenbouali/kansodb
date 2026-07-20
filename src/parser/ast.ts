@@ -1,4 +1,5 @@
 export type SelectColumn = ColumnReference | WildcardSelection;
+export type Statement = SelectStatement | CreateTableStatement | InsertStatement;
 
 export interface SelectStatement {
   type: "select";
@@ -7,6 +8,25 @@ export interface SelectStatement {
   where?: Expression;
   orderBy?: OrderByClause;
   limit?: number;
+}
+
+export interface CreateTableStatement {
+  type: "create_table";
+  tableName: string;
+  columns: CreateColumnDefinition[];
+}
+
+export interface CreateColumnDefinition {
+  name: string;
+  dataType: CreateColumnDataType;
+  nullable: boolean;
+}
+
+export interface InsertStatement {
+  type: "insert";
+  tableName: string;
+  columns?: string[];
+  values: LiteralExpression[];
 }
 
 export interface ColumnReference {
@@ -51,3 +71,4 @@ export type Expression = ComparisonExpression | LogicalExpression;
 export type ComparisonOperator = "=" | "!=" | ">" | ">=" | "<" | "<=";
 export type LogicalOperator = "AND" | "OR";
 export type OrderDirection = "ASC" | "DESC";
+export type CreateColumnDataType = "INTEGER" | "DECIMAL" | "TEXT" | "BOOLEAN";

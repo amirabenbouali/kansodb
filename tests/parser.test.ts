@@ -5,6 +5,10 @@ function parse(sql: string) {
   return parseSelectStatement(tokenize(sql));
 }
 
+function parseStatement(sql: string) {
+  return new Parser(tokenize(sql)).parse();
+}
+
 describe("parser", () => {
   it("parses through the Parser.parse API", () => {
     expect(new Parser(tokenize("SELECT name FROM employees")).parse()).toEqual({
@@ -257,5 +261,190 @@ LIMIT 5;`;
       },
       limit: 5
     });
+  });
+});
+
+describe("CREATE TABLE parser", () => {
+  it("parses a one-column table", () => {
+    expect(parseStatement("CREATE TABLE employees (id INTEGER)")).toEqual({
+      type: "create_table",
+      tableName: "employees",
+      columns: [{ name: "id", dataType: "INTEGER", nullable: false }]
+    });
+  });
+
+  it("parses multiple columns", () => {
+    expect(parseStatement("CREATE TABLE employees (id INTEGER, name TEXT)")).toMatchObject({
+      columns: [
+        { name: "id", dataType: "INTEGER", nullable: false },
+        { name: "name", dataType: "TEXT", nullable: false }
+      ]
+    });
+  });
+
+  it("parses every supported data type", () => {
+    expect(parseStatement("CREATE TABLE t (a INTEGER, b DECIMAL, c TEXT, d BOOLEAN)")).toMatchObject({
+      columns: [
+        { dataType: "INTEGER" },
+        { dataType: "DECIMAL" },
+        { dataType: "TEXT" },
+        { dataType: "BOOLEAN" }
+      ]
+    });
+  });
+
+  it("defaults columns to non-nullable", () => {
+    expect(parseStatement("CREATE TABLE t (id INTEGER)")).toMatchObject({ columns: [{ nullable: false }] });
+  });
+
+  it("parses explicit NULL", () => {
+    expect(parseStatement("CREATE TABLE t (salary DECIMAL NULL)")).toMatchObject({ columns: [{ nullable: true }] });
+  });
+
+  it("parses explicit NOT NULL", () => {
+    expect(parseStatement("CREATE TABLE t (name TEXT NOT NULL)")).toMatchObject({ columns: [{ nullable: false }] });
+  });
+
+  it("allows an optional semicolon", () => {
+    expect(parseStatement("CREATE TABLE t (id INTEGER);")).toMatchObject({ type: "create_table", tableName: "t" });
+  });
+
+  it("matches keywords case-insensitively", () => {
+    expect(parseStatement("create table Employees (id integer, name TeXt null)")).toEqual({
+      type: "create_table",
+      tableName: "Employees",
+      columns: [
+        { name: "id", dataType: "INTEGER", nullable: false },
+        { name: "name", dataType: "TEXT", nullable: true }
+      ]
+    });
+  });
+
+  it("rejects an empty column list", () => {
+    expect(() => parseStatement("CREATE TABLE employees ()")).toThrow(ParserError);
+  });
+
+  it("rejects a missing table name", () => {
+    expect(() => parseStatement("CREATE TABLE (id INTEGER)")).toThrow(ParserError);
+  });
+
+  it("rejects a missing opening parenthesis", () => {
+    expect(() => parseStatement("CREATE TABLE employees id INTEGER)")).toThrow(ParserError);
+  });
+
+  it("rejects a missing closing parenthesis", () => {
+    expect(() => parseStatement("CREATE TABLE employees (id INTEGER")).toThrow(ParserError);
+  });
+
+  it("rejects a missing column type", () => {
+    expect(() => parseStatement("CREATE TABLE employees (id)")).toThrow(ParserError);
+  });
+
+  it("rejects an unsupported column type", () => {
+    expect(() => parseStatement("CREATE TABLE employees (id UNKNOWN)")).toThrow(ParserError);
+  });
+
+  it("rejects a trailing comma", () => {
+    expect(() => parseStatement("CREATE TABLE employees (id INTEGER,)")).toThrow(ParserError);
+  });
+
+  it("rejects an invalid NOT modifier", () => {
+    expect(() => parseStatement("CREATE TABLE employees (id INTEGER NOT)")).toThrow(ParserError);
+  });
+
+  it("rejects conflicting nullability modifiers", () => {
+    expect(() => parseStatement("CREATE TABLE employees (id INTEGER NULL NOT NULL)")).toThrow(ParserError);
+  });
+
+  it("rejects unexpected trailing tokens", () => {
+    expect(() => parseStatement("CREATE TABLE employees (id INTEGER) SELECT")).toThrow(ParserError);
+  });
+});
+
+describe("INSERT parser", () => {
+  it("parses a positional insert", () => {
+    expect(parseStatement("INSERT INTO employees VALUES (1, 'Amira', TRUE)")).toEqual({
+      type: "insert",
+      tableName: "employees",
+      values: [
+        { type: "literal", value: 1 },
+        { type: "literal", value: "Amira" },
+        { type: "literal", value: true }
+      ]
+    });
+  });
+
+  it("parses a named-column insert", () => {
+    expect(parseStatement("INSERT INTO employees (id, name) VALUES (1, 'Amira')")).toEqual({
+      type: "insert",
+      tableName: "employees",
+      columns: ["id", "name"],
+      values: [
+        { type: "literal", value: 1 },
+        { type: "literal", value: "Amira" }
+      ]
+    });
+  });
+
+  it("preserves reordered named columns", () => {
+    expect(parseStatement("INSERT INTO employees (name, id) VALUES ('Amira', 1)")).toMatchObject({
+      columns: ["name", "id"]
+    });
+  });
+
+  it("parses integer, decimal, string, boolean, and NULL values", () => {
+    expect(parseStatement("INSERT INTO t VALUES (1, 2.5, 'x', FALSE, NULL)")).toMatchObject({
+      values: [
+        { value: 1 },
+        { value: 2.5 },
+        { value: "x" },
+        { value: false },
+        { value: null }
+      ]
+    });
+  });
+
+  it("allows an optional semicolon", () => {
+    expect(parseStatement("INSERT INTO employees VALUES (1);")).toMatchObject({ type: "insert" });
+  });
+
+  it("matches keywords case-insensitively", () => {
+    expect(parseStatement("insert into Employees values (TRUE)")).toMatchObject({
+      type: "insert",
+      tableName: "Employees",
+      values: [{ value: true }]
+    });
+  });
+
+  it("rejects a missing table name", () => {
+    expect(() => parseStatement("INSERT INTO VALUES (1)")).toThrow(ParserError);
+  });
+
+  it("rejects an empty value list", () => {
+    expect(() => parseStatement("INSERT INTO employees VALUES ()")).toThrow(ParserError);
+  });
+
+  it("rejects a trailing column comma", () => {
+    expect(() => parseStatement("INSERT INTO employees (id, name,) VALUES (1, 'Amira')")).toThrow(ParserError);
+  });
+
+  it("rejects a trailing value comma", () => {
+    expect(() => parseStatement("INSERT INTO employees VALUES (1,)")).toThrow(ParserError);
+  });
+
+  it("rejects a missing VALUES keyword", () => {
+    expect(() => parseStatement("INSERT INTO employees (id) (1)")).toThrow(ParserError);
+  });
+
+  it("rejects mismatched parentheses", () => {
+    expect(() => parseStatement("INSERT INTO employees VALUES (1, 2")).toThrow(ParserError);
+  });
+
+  it("rejects identifiers used as values", () => {
+    expect(() => parseStatement("INSERT INTO employees VALUES (1, salary)")).toThrow(ParserError);
+  });
+
+  it("rejects unexpected trailing tokens", () => {
+    expect(() => parseStatement("INSERT INTO employees VALUES (1) SELECT")).toThrow(ParserError);
   });
 });

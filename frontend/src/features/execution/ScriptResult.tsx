@@ -1,5 +1,5 @@
 import type { KansoScriptExecutionResult } from "./executionTypes";
-import { ExecutionError } from "./ExecutionError";
+import { ErrorPanel } from "../errors/ErrorPanel";
 
 interface ScriptResultProps {
   result: KansoScriptExecutionResult;
@@ -24,7 +24,7 @@ export function ScriptResult({ result }: ScriptResultProps) {
               <span>{record.status} · {record.resultType} · {record.durationMs.toFixed(1)} ms</span>
             </div>
             {record.sql.trim().length > 0 ? <code>{excerpt(record.sql)}</code> : null}
-            {record.error === undefined ? null : <ExecutionError error={record.error} sourceSql={record.sql} />}
+            {record.error === undefined ? null : <ErrorPanel error={record.error} sourceSql={record.sql} statementNumber={record.index + 1} />}
           </article>
         ))}
       </div>

@@ -7,8 +7,14 @@ import type { KansoRunResult, QueryTabExecutionSnapshot, SchemaRefreshReason } f
 
 interface UseQueryExecutionOptions {
   client: KansoClient;
+  onExecutionRecorded: (tab: QueryTab, snapshot: QueryTabExecutionSnapshot) => void;
   onSchemaRefreshNeeded: (reason: SchemaRefreshReason) => void;
+  onSessionStateRefreshNeeded: () => void;
   onTabExecutionChange: (tabId: string, execution: QueryTabExecutionSnapshot | null) => void;
+  scriptOptions: {
+    atomic: boolean;
+    stopOnError: boolean;
+  };
 }
 
 interface UseQueryExecutionResult {
@@ -20,7 +26,10 @@ interface UseQueryExecutionResult {
 
 export function useQueryExecution({
   client,
+  onExecutionRecorded,
   onSchemaRefreshNeeded,
+  onSessionStateRefreshNeeded,
+  scriptOptions,
   onTabExecutionChange
 }: UseQueryExecutionOptions): UseQueryExecutionResult {
   const [runningTabId, setRunningTabId] = useState<string | null>(null);
@@ -47,8 +56,8 @@ export function useQueryExecution({
 
     try {
       const result = mode === "single"
-        ? await client.execute(tab.sql)
-        : await client.executeScript(tab.sql, { stopOnError: true, atomic: false });
+        ? await client.executeWithTrace(tab.sql)
+        : await client.executeScriptWithTrace(tab.sql, scriptOptions);
 
       if (runIdRef.current !== runId) {
         return;
@@ -56,36 +65,44 @@ export function useQueryExecution({
 
       const snapshot: QueryTabExecutionSnapshot = {
         status: "success",
-        result,
+        result: result.result,
         error: null,
-        executionTimeMs: result.durationMs,
-        executedSql: tab.sql
+        executionTimeMs: result.result.durationMs,
+        executedSql: tab.sql,
+        trace: result.trace
       };
 
       onTabExecutionChange(tab.id, snapshot);
+      onExecutionRecorded(tab, snapshot);
 
-      const reason = schemaRefreshReason(result);
+      const reason = schemaRefreshReason(result.result);
       if (reason !== null) {
         onSchemaRefreshNeeded(reason);
       }
+      onSessionStateRefreshNeeded();
     } catch (error) {
       if (runIdRef.current !== runId) {
         return;
       }
 
-      onTabExecutionChange(tab.id, {
+      const snapshot: QueryTabExecutionSnapshot = {
         status: "error",
         result: null,
-        error: isKansoErrorView(error) ? error : mapKansoError(error),
+        error: isTracedError(error) ? error.error : isKansoErrorView(error) ? error : mapKansoError(error),
         executionTimeMs: null,
-        executedSql: tab.sql
-      });
+        executedSql: tab.sql,
+        trace: isTracedError(error) ? error.trace : null
+      };
+
+      onTabExecutionChange(tab.id, snapshot);
+      onExecutionRecorded(tab, snapshot);
+      onSessionStateRefreshNeeded();
     } finally {
       if (runIdRef.current === runId) {
         setRunningTabId(null);
       }
     }
-  }, [client, onSchemaRefreshNeeded, onTabExecutionChange, runningTabId]);
+  }, [client, onExecutionRecorded, onSchemaRefreshNeeded, onSessionStateRefreshNeeded, onTabExecutionChange, runningTabId, scriptOptions]);
 
   return {
     cancelDisplay,
@@ -93,6 +110,16 @@ export function useQueryExecution({
     running: runningTabId !== null,
     runningTabId
   };
+}
+
+function isTracedError(value: unknown): value is { error: NonNullable<QueryTabExecutionSnapshot["error"]>; trace: NonNullable<QueryTabExecutionSnapshot["trace"]> } {
+  return typeof value === "object"
+    && value !== null
+    && "error" in value
+    && isKansoErrorView(value.error)
+    && "trace" in value
+    && typeof value.trace === "object"
+    && value.trace !== null;
 }
 
 function schemaRefreshReason(result: KansoRunResult): SchemaRefreshReason | null {

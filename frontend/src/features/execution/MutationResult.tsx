@@ -2,13 +2,15 @@ import type { MutationExecutionView } from "./executionTypes";
 
 interface MutationResultProps {
   result: MutationExecutionView;
+  transactionActive: boolean;
 }
 
-export function MutationResult({ result }: MutationResultProps) {
+export function MutationResult({ result, transactionActive }: MutationResultProps) {
   return (
-    <div className="result-card is-success">
+    <div className={transactionActive ? "result-card is-success is-uncommitted" : "result-card is-success"}>
       <strong>{mutationMessage(result)}</strong>
       <span>{result.tableName} · {result.durationMs.toFixed(1)} ms</span>
+      {transactionActive ? <em>Visible in this session until commit or rollback.</em> : null}
     </div>
   );
 }

@@ -11,7 +11,7 @@ import {
 interface UseQueryTabsResult {
   activeTab: QueryTab | null;
   activeTabId: string | null;
-  addTab: () => QueryTab;
+  addTab: (sql?: string) => QueryTab;
   closeTab: (tabId: string) => void;
   getTab: (tabId: string) => QueryTab | undefined;
   renameTab: (tabId: string, title: string) => void;
@@ -46,13 +46,13 @@ export function useQueryTabs(): UseQueryTabsResult {
     setActiveTabIdState(tabId);
   }, []);
 
-  const addTab = useCallback(() => {
+  const addTab = useCallback((sql = "") => {
     const now = Date.now();
     const newTab: QueryTab = {
       ...createDefaultQueryTab(now),
       id: createUniqueTabId(tabs),
       title: nextQueryTitle(tabs),
-      sql: "",
+      sql,
       isDirty: false,
       execution: null
     };

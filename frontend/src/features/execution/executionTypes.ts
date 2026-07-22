@@ -1,4 +1,5 @@
 import type { DatabaseSchemaView } from "../schema/schemaTypes";
+import type { ExecutionTrace } from "../../engine/tracing/traceTypes";
 
 export type KansoCellValue = string | number | boolean | null;
 export type KansoResultRow = Record<string, KansoCellValue>;
@@ -95,6 +96,7 @@ export interface QueryTabExecutionSnapshot {
   error: KansoErrorView | null;
   executionTimeMs: number | null;
   executedSql: string | null;
+  trace: ExecutionTrace | null;
 }
 
 export type SchemaRefreshReason = "schema" | "mutation" | "transaction" | "persistence" | "script";

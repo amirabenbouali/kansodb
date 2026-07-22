@@ -21,14 +21,6 @@ export interface SchemaTable {
   rows: number;
 }
 
-export interface HistoryItem {
-  duration: string;
-  id: number;
-  outcome: string;
-  status: "success" | "error";
-  statement: string;
-}
-
 export interface PipelineStage {
   detail: string;
   duration: string;

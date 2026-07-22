@@ -75,7 +75,7 @@ export class Database {
 
   private static async createDefaultFileAdapter(): Promise<FileAdapter> {
     const modulePath = "../persistence/node-file-adapter.js";
-    const adapterModule = await import(modulePath) as { NodeFileAdapter: new () => FileAdapter };
+    const adapterModule = await import(/* @vite-ignore */ modulePath) as { NodeFileAdapter: new () => FileAdapter };
     return new adapterModule.NodeFileAdapter();
   }
 
@@ -217,6 +217,10 @@ export class Database {
 
   public get autoSave(): AutoSaveMode {
     return this.autoSaveMode;
+  }
+
+  public setAutoSave(mode: AutoSaveMode): void {
+    this.autoSaveMode = mode;
   }
 
   public get persistenceState(): PersistenceState {

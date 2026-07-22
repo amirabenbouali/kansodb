@@ -97,7 +97,7 @@ export function SchemaExplorer({ onInsertSql, provider, refreshToken }: SchemaEx
 
       {schemaState.status === "loading" ? <SchemaEmptyState message="Loading schema..." /> : null}
       {schemaState.status === "error" ? <SchemaEmptyState tone="error" message={schemaState.message} /> : null}
-      {schemaState.status === "empty" ? <SchemaEmptyState message="This mock database has no tables." /> : null}
+      {schemaState.status === "empty" ? <SchemaEmptyState message="This database has no tables." /> : null}
 
       {schemaState.status === "loaded" && filteredTables.length === 0 ? (
         <SchemaEmptyState message={`No tables or columns match "${search}".`} />

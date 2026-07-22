@@ -11,9 +11,10 @@ import { TransactionResult } from "./TransactionResult";
 interface ExecutionPanelProps {
   running: boolean;
   snapshot: QueryTabExecutionSnapshot | null;
+  transactionActive: boolean;
 }
 
-export function ExecutionPanel({ running, snapshot }: ExecutionPanelProps) {
+export function ExecutionPanel({ running, snapshot, transactionActive }: ExecutionPanelProps) {
   if (running) {
     return (
       <div className="execution-output">
@@ -21,7 +22,7 @@ export function ExecutionPanel({ running, snapshot }: ExecutionPanelProps) {
           <span className="running-spinner" aria-hidden="true" />
           Running query against local KansoDB...
         </div>
-        {snapshot?.result === undefined || snapshot.result === null ? null : renderResult(snapshot.result)}
+        {snapshot?.result === undefined || snapshot.result === null ? null : renderResult(snapshot.result, transactionActive)}
       </div>
     );
   }
@@ -38,25 +39,25 @@ export function ExecutionPanel({ running, snapshot }: ExecutionPanelProps) {
     return <EmptyState message="No result is available for this tab yet." />;
   }
 
-  return <div className="execution-output">{renderResult(snapshot.result)}</div>;
+  return <div className="execution-output">{renderResult(snapshot.result, transactionActive)}</div>;
 }
 
-function renderResult(result: KansoRunResult) {
+function renderResult(result: KansoRunResult, transactionActive: boolean) {
   if (result.type === "script") {
     return <ScriptResult result={result} />;
   }
 
-  return renderStatementResult(result);
+  return renderStatementResult(result, transactionActive);
 }
 
-function renderStatementResult(result: KansoExecutionResult) {
+function renderStatementResult(result: KansoExecutionResult, transactionActive: boolean) {
   switch (result.type) {
     case "query":
       return <QueryResultTable result={result} />;
     case "mutation":
-      return <MutationResult result={result} />;
+      return <MutationResult result={result} transactionActive={transactionActive} />;
     case "schema":
-      return <SchemaResult result={result} />;
+      return <SchemaResult result={result} transactionActive={transactionActive} />;
     case "transaction":
       return <TransactionResult result={result} />;
     case "persistence":

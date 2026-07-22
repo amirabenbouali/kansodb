@@ -1,9 +1,12 @@
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef } from "react";
+import type * as Monaco from "monaco-editor";
 import type { editor } from "monaco-editor";
 import type { EditorInsertionRequest } from "./queryTabTypes";
 
 interface SqlEditorProps {
+  diagnosticRange: { start: number; end: number; message: string } | null;
+  highlightedRange: { start: number; end: number } | null;
   insertionRequest: EditorInsertionRequest | null;
   onExecute: () => void;
   onNewTab: () => void;
@@ -37,8 +40,19 @@ const editorOptions: editor.IStandaloneEditorConstructionOptions = {
   wordWrap: "off"
 };
 
-export function SqlEditor({ insertionRequest, onExecute, onNewTab, onSave, onSqlChange, sql }: SqlEditorProps) {
+export function SqlEditor({
+  diagnosticRange,
+  highlightedRange,
+  insertionRequest,
+  onExecute,
+  onNewTab,
+  onSave,
+  onSqlChange,
+  sql
+}: SqlEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
+  const decorationIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
     if (insertionRequest === null || editorRef.current === null) {
@@ -62,6 +76,72 @@ export function SqlEditor({ insertionRequest, onExecute, onNewTab, onSave, onSql
     ]);
     editorInstance.focus();
   }, [insertionRequest]);
+
+  useEffect(() => {
+    const editorInstance = editorRef.current;
+    const model = editorInstance?.getModel();
+
+    if (editorInstance === null || editorInstance === undefined || model === null || model === undefined) {
+      return;
+    }
+
+    if (highlightedRange === null) {
+      decorationIdsRef.current = editorInstance.deltaDecorations(decorationIdsRef.current, []);
+      return;
+    }
+
+    const startPosition = model.getPositionAt(highlightedRange.start);
+    const endPosition = model.getPositionAt(highlightedRange.end);
+    const range = {
+      startLineNumber: startPosition.lineNumber,
+      startColumn: startPosition.column,
+      endLineNumber: endPosition.lineNumber,
+      endColumn: endPosition.column
+    };
+
+    decorationIdsRef.current = editorInstance.deltaDecorations(decorationIdsRef.current, [
+      {
+        range,
+        options: {
+          className: "sql-trace-highlight",
+          inlineClassName: "sql-trace-highlight-inline",
+          overviewRuler: {
+            color: "#8b6cff",
+            position: 2
+          }
+        }
+      }
+    ]);
+    editorInstance.revealRangeInCenterIfOutsideViewport(range);
+  }, [highlightedRange]);
+
+  useEffect(() => {
+    const editorInstance = editorRef.current;
+    const model = editorInstance?.getModel();
+    const monaco = monacoRef.current;
+
+    if (editorInstance === null || editorInstance === undefined || model === null || model === undefined || monaco === null) {
+      return;
+    }
+
+    if (diagnosticRange === null) {
+      monaco.editor.setModelMarkers(model, "kansodb", []);
+      return;
+    }
+
+    const startPosition = model.getPositionAt(diagnosticRange.start);
+    const endPosition = model.getPositionAt(Math.max(diagnosticRange.end, diagnosticRange.start + 1));
+    monaco.editor.setModelMarkers(model, "kansodb", [
+      {
+        severity: monaco.MarkerSeverity.Error,
+        message: diagnosticRange.message,
+        startLineNumber: startPosition.lineNumber,
+        startColumn: startPosition.column,
+        endLineNumber: endPosition.lineNumber,
+        endColumn: endPosition.column
+      }
+    ]);
+  }, [diagnosticRange]);
 
   const beforeMount: BeforeMount = (monaco) => {
     monaco.editor.defineTheme("kanso-dark", {
@@ -90,6 +170,7 @@ export function SqlEditor({ insertionRequest, onExecute, onNewTab, onSave, onSql
 
   const handleMount: OnMount = (editorInstance, monaco) => {
     editorRef.current = editorInstance;
+    monacoRef.current = monaco;
     editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, onExecute);
     editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyT, onNewTab);
     editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, onSave);

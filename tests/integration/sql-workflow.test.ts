@@ -64,9 +64,9 @@ describe("SQL workflow integration", () => {
       type: "query",
       columns: ["name", "salary"],
       rows: [
+        { name: "Lina", salary: null },
         { name: "Amira", salary: 48000 },
         { name: "Maya", salary: 42000.5 },
-        { name: "Lina", salary: null }
       ],
       rowCount: 3
     });

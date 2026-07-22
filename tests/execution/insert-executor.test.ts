@@ -85,7 +85,7 @@ describe("positional INSERT execution", () => {
   it("rejects null constraint violations", () => {
     expectExecutionError(
       () => executeSql(createEmployeesDatabase(), "INSERT INTO employees VALUES (1, NULL, 'Engineering', 1, TRUE)"),
-      "NULL_CONSTRAINT"
+      "NOT_NULL_VIOLATION"
     );
   });
 
@@ -197,7 +197,7 @@ describe("named-column INSERT execution", () => {
           createEmployeesDatabase(),
           "INSERT INTO employees (id, name, department, salary, active) VALUES (1, NULL, 'Engineering', 1, TRUE)"
         ),
-      "NULL_CONSTRAINT"
+      "NOT_NULL_VIOLATION"
     );
   });
 

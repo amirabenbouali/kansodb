@@ -194,11 +194,13 @@ describe("Executor WHERE expressions", () => {
   });
 
   it("filters null equality", () => {
-    expect(names("SELECT name FROM employees WHERE salary = NULL")).toEqual(["Lina"]);
+    expect(names("SELECT name FROM employees WHERE salary = NULL")).toEqual([]);
+    expect(names("SELECT name FROM employees WHERE salary IS NULL")).toEqual(["Lina"]);
   });
 
   it("filters null inequality", () => {
-    expect(names("SELECT name FROM employees WHERE salary != NULL")).toEqual(["Amira", "Maya", "Noah"]);
+    expect(names("SELECT name FROM employees WHERE salary != NULL")).toEqual([]);
+    expect(names("SELECT name FROM employees WHERE salary IS NOT NULL")).toEqual(["Amira", "Maya", "Noah"]);
   });
 
   it("does not use implicit numeric coercion", () => {
@@ -213,8 +215,8 @@ describe("Executor WHERE expressions", () => {
     expectExecutionError(() => execute("SELECT name FROM employees WHERE active > FALSE"), "INVALID_COMPARISON");
   });
 
-  it("rejects null ordering comparisons", () => {
-    expectExecutionError(() => execute("SELECT name FROM employees WHERE salary > NULL"), "INVALID_COMPARISON");
+  it("filters unknown null ordering comparisons", () => {
+    expect(names("SELECT name FROM employees WHERE salary > NULL")).toEqual([]);
   });
 });
 
@@ -251,7 +253,7 @@ describe("Executor ORDER BY", () => {
   });
 
   it("sorts numbers descending", () => {
-    expect(names("SELECT name FROM employees ORDER BY salary DESC")).toEqual(["Noah", "Amira", "Maya", "Lina"]);
+    expect(names("SELECT name FROM employees ORDER BY salary DESC")).toEqual(["Lina", "Noah", "Amira", "Maya"]);
   });
 
   it("sorts strings ascending", () => {
@@ -274,8 +276,8 @@ describe("Executor ORDER BY", () => {
     expect(names("SELECT name FROM employees ORDER BY salary ASC").at(-1)).toBe("Lina");
   });
 
-  it("keeps nulls last in descending order", () => {
-    expect(names("SELECT name FROM employees ORDER BY salary DESC").at(-1)).toBe("Lina");
+  it("keeps nulls first in descending order by default", () => {
+    expect(names("SELECT name FROM employees ORDER BY salary DESC")[0]).toBe("Lina");
   });
 
   it("sorts stably", () => {
@@ -283,7 +285,7 @@ describe("Executor ORDER BY", () => {
   });
 
   it("sorts by a non-selected column", () => {
-    expect(execute("SELECT name FROM employees ORDER BY salary DESC").rows[0]).toEqual({ name: "Noah" });
+    expect(execute("SELECT name FROM employees ORDER BY salary DESC").rows[0]).toEqual({ name: "Lina" });
   });
 
   it("does not mutate stored row order", () => {
@@ -317,7 +319,7 @@ describe("Executor LIMIT", () => {
   });
 
   it("applies limit after sorting", () => {
-    expect(names("SELECT name FROM employees ORDER BY salary DESC LIMIT 2")).toEqual(["Noah", "Amira"]);
+    expect(names("SELECT name FROM employees ORDER BY salary DESC LIMIT 2")).toEqual(["Lina", "Noah"]);
   });
 
   it("defensively rejects invalid AST limit values", () => {
@@ -330,7 +332,7 @@ describe("Executor LIMIT", () => {
 
 describe("Executor full queries", () => {
   it("executes WHERE with ORDER BY", () => {
-    expect(names("SELECT name FROM employees WHERE department = 'Engineering' ORDER BY salary DESC")).toEqual(["Noah", "Amira", "Lina"]);
+    expect(names("SELECT name FROM employees WHERE department = 'Engineering' ORDER BY salary DESC")).toEqual(["Lina", "Noah", "Amira"]);
   });
 
   it("executes WHERE with LIMIT", () => {
@@ -342,7 +344,7 @@ describe("Executor full queries", () => {
   });
 
   it("executes WHERE, ORDER BY, and LIMIT", () => {
-    expect(names("SELECT name FROM employees WHERE department = 'Engineering' ORDER BY salary DESC LIMIT 2")).toEqual(["Noah", "Amira"]);
+    expect(names("SELECT name FROM employees WHERE department = 'Engineering' ORDER BY salary DESC LIMIT 2")).toEqual(["Lina", "Noah"]);
   });
 
   it("executes the full integration query through lexer, parser, and executor", () => {

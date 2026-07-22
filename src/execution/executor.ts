@@ -5,28 +5,26 @@ import { Parser } from "../parser/parser.js";
 import type {
   CreateColumnDataType,
   CreateTableStatement,
+  DeleteStatement,
   InsertStatement,
-  SelectColumn,
   SelectStatement,
-  Statement
+  Statement,
+  TableConstraint,
+  UpdateStatement
 } from "../parser/ast.js";
 import type { ColumnDefinition } from "../storage/column.js";
 import type { Database } from "../storage/database.js";
 import { DataType } from "../storage/data-type.js";
 import type { DatabaseValue, InputRow, StoredRow } from "../storage/row.js";
 import type { Table } from "../storage/table.js";
-import { evaluateExpression } from "./expression-evaluator.js";
+import { evaluateExpression, evaluateScalar, tableContext } from "./expression-evaluator.js";
+import { JoinExecutor } from "./join-executor.js";
 import type { QueryResult } from "./query-result.js";
-import type { CreateTableResult, InsertResult, StatementResult } from "./statement-result.js";
+import type { CreateTableResult, DeleteResult, InsertResult, StatementResult, UpdateResult } from "./statement-result.js";
 
 interface ResolvedColumn {
   queryName: string;
   schemaName: string;
-}
-
-interface IndexedRow {
-  row: StoredRow;
-  index: number;
 }
 
 export class Executor {
@@ -39,6 +37,8 @@ export class Executor {
   public execute(statement: SelectStatement): QueryResult;
   public execute(statement: CreateTableStatement): CreateTableResult;
   public execute(statement: InsertStatement): InsertResult;
+  public execute(statement: UpdateStatement): UpdateResult;
+  public execute(statement: DeleteStatement): DeleteResult;
   public execute(statement: Statement): StatementResult;
   public execute(statement: Statement): StatementResult {
     switch (statement.type) {
@@ -48,54 +48,21 @@ export class Executor {
         return this.executeCreateTable(statement);
       case "insert":
         return this.executeInsert(statement);
+      case "update":
+        return this.executeUpdate(statement);
+      case "delete":
+        return this.executeDelete(statement);
     }
 
     return this.assertNever(statement);
   }
 
   private executeSelect(statement: SelectStatement): QueryResult {
-    const table = this.resolveTable(statement.from.name);
-    const selectedColumns = this.resolveSelectedColumns(statement.columns, table);
-
-    if (statement.where !== undefined) {
-      this.validateExpressionColumns(statement.where, table);
-    }
-
-    const orderByColumn = statement.orderBy === undefined ? undefined : this.resolveColumn(statement.orderBy.column, table).schemaName;
-
-    if (statement.limit !== undefined) {
-      this.validateLimit(statement.limit);
-    }
-
-    let rows = table.getRows();
-
-    if (statement.where !== undefined) {
-      rows = rows.filter((row) => evaluateExpression(statement.where!, row, table));
-    }
-
-    if (statement.orderBy !== undefined && orderByColumn !== undefined) {
-      rows = this.sortRows(rows, orderByColumn, statement.orderBy.direction);
-    }
-
-    if (statement.limit !== undefined) {
-      rows = rows.slice(0, statement.limit);
-    }
-
-    const resultRows = rows.map((row) => this.projectRow(row, selectedColumns));
-    return {
-      type: "query",
-      columns: selectedColumns.map((column) => column.schemaName),
-      rows: resultRows,
-      rowCount: resultRows.length
-    };
+    return new JoinExecutor().execute(statement, this.database);
   }
 
   private executeCreateTable(statement: CreateTableStatement): CreateTableResult {
-    const columns = statement.columns.map((column): ColumnDefinition => ({
-      name: column.name,
-      type: this.mapDataType(column.dataType),
-      nullable: column.nullable
-    }));
+    const columns = this.buildCreateTableColumns(statement);
 
     try {
       this.database.createTable(statement.tableName, columns);
@@ -115,7 +82,7 @@ export class Executor {
     const row = statement.columns === undefined ? this.buildPositionalInsertRow(statement, table) : this.buildNamedInsertRow(statement, table);
 
     try {
-      table.insert(row);
+      this.database.insertInto(table.name, row);
     } catch (error) {
       this.throwExecutionErrorFromStorage(error);
     }
@@ -125,6 +92,135 @@ export class Executor {
       tableName: table.name,
       affectedRows: 1
     };
+  }
+
+  private executeUpdate(statement: UpdateStatement): UpdateResult {
+    const table = this.resolveTable(statement.tableName);
+    const assignments = this.resolveAssignments(statement, table);
+
+    if (statement.where !== undefined) {
+      this.validateExpressionColumns(statement.where, table);
+    }
+
+    try {
+      const affectedRows = this.database.updateRows(
+        table.name,
+        (row) => (statement.where === undefined ? true : evaluateExpression(statement.where, row, table)),
+        (row) => {
+          const updatedRow: InputRow = { ...row };
+          const context = tableContext(row, table);
+
+          for (const assignment of assignments) {
+            updatedRow[assignment.schemaName] = evaluateScalar(assignment.expression, context);
+          }
+
+          return updatedRow;
+        }
+      );
+
+      return {
+        type: "update",
+        tableName: table.name,
+        affectedRows
+      };
+    } catch (error) {
+      this.throwExecutionErrorFromStorage(error);
+    }
+  }
+
+  private executeDelete(statement: DeleteStatement): DeleteResult {
+    const table = this.resolveTable(statement.tableName);
+
+    if (statement.where !== undefined) {
+      this.validateExpressionColumns(statement.where, table);
+    }
+
+    try {
+      const affectedRows = this.database.deleteRows(
+        table.name,
+        (row) => (statement.where === undefined ? true : evaluateExpression(statement.where, row, table))
+      );
+
+      return {
+        type: "delete",
+        tableName: table.name,
+        affectedRows
+      };
+    } catch (error) {
+      this.throwExecutionErrorFromStorage(error);
+    }
+  }
+
+  private buildCreateTableColumns(statement: CreateTableStatement): ColumnDefinition[] {
+    const columns = statement.columns.map((column): ColumnDefinition => ({
+      name: column.name,
+      type: this.mapDataType(column.dataType),
+      nullable: column.nullable,
+      unique: column.unique,
+      primaryKey: column.primaryKey,
+      ...(column.references === undefined ? {} : { references: { ...column.references } })
+    }));
+
+    for (const constraint of statement.constraints ?? []) {
+      this.applyTableConstraint(statement.tableName, columns, constraint);
+    }
+
+    return columns;
+  }
+
+  private applyTableConstraint(tableName: string, columns: ColumnDefinition[], constraint: TableConstraint): void {
+    const column = this.resolveCreateColumn(tableName, columns, constraint.columnName);
+
+    if (constraint.type === "primary_key") {
+      const existingPrimaryKey = columns.find((candidate) => candidate.primaryKey === true);
+      if (column.primaryKey === true) {
+        throw new ExecutionError({
+          code: "DUPLICATE_PRIMARY_KEY",
+          message: `Duplicate primary key declaration for "${tableName}.${column.name}".`,
+          tableName,
+          columnName: column.name
+        });
+      }
+
+      if (existingPrimaryKey !== undefined) {
+        throw new ExecutionError({
+          code: "MULTIPLE_PRIMARY_KEYS",
+          message: `Table "${tableName}" declares more than one primary key.`,
+          tableName,
+          columnName: constraint.columnName
+        });
+      }
+
+      column.primaryKey = true;
+      column.unique = true;
+      column.nullable = false;
+      return;
+    }
+
+    if (column.references !== undefined) {
+      throw new ExecutionError({
+        code: "DUPLICATE_CONSTRAINT",
+        message: `Duplicate foreign key declaration for "${tableName}.${column.name}".`,
+        tableName,
+        columnName: column.name
+      });
+    }
+
+    column.references = { ...constraint.references };
+  }
+
+  private resolveCreateColumn(tableName: string, columns: readonly ColumnDefinition[], columnName: string): ColumnDefinition {
+    const column = columns.find((candidate) => candidate.name.toLowerCase() === columnName.toLowerCase());
+    if (column === undefined) {
+      throw new ExecutionError({
+        code: "CONSTRAINT_COLUMN_NOT_FOUND",
+        message: `Constraint column "${columnName}" was not found in table "${tableName}".`,
+        tableName,
+        columnName
+      });
+    }
+
+    return column;
   }
 
   private resolveTable(name: string): Table {
@@ -137,41 +233,6 @@ export class Executor {
         tableName: name
       });
     }
-  }
-
-  private resolveSelectedColumns(columns: readonly SelectColumn[], table: Table): ResolvedColumn[] {
-    if (columns.length === 1 && columns[0]?.type === "wildcard") {
-      return table.getSchema().map((column) => ({
-        queryName: column.name,
-        schemaName: column.name
-      }));
-    }
-
-    const seen = new Set<string>();
-    return columns.map((column) => {
-      if (column.type === "wildcard") {
-        throw new ExecutionError({
-          code: "UNSUPPORTED_STATEMENT",
-          message: "Wildcard selection cannot be mixed with named columns",
-          tableName: table.name
-        });
-      }
-
-      const resolved = this.resolveColumn(column.name, table);
-      const key = resolved.schemaName.toLowerCase();
-
-      if (seen.has(key)) {
-        throw new ExecutionError({
-          code: "DUPLICATE_COLUMN",
-          message: `Duplicate selected column "${column.name}"`,
-          tableName: table.name,
-          columnName: column.name
-        });
-      }
-
-      seen.add(key);
-      return resolved;
-    });
   }
 
   private buildPositionalInsertRow(statement: InsertStatement, table: Table): InputRow {
@@ -227,6 +288,31 @@ export class Executor {
     return row;
   }
 
+  private resolveAssignments(statement: UpdateStatement, table: Table): Array<{ schemaName: string; expression: UpdateStatement["assignments"][number]["value"] }> {
+    const seen = new Set<string>();
+
+    return statement.assignments.map((assignment) => {
+      const resolved = this.resolveColumn(assignment.columnName, table);
+      const key = resolved.schemaName.toLowerCase();
+
+      if (seen.has(key)) {
+        throw new ExecutionError({
+          code: "DUPLICATE_COLUMN",
+          message: `Column "${assignment.columnName}" is assigned more than once.`,
+          tableName: table.name,
+          columnName: assignment.columnName
+        });
+      }
+
+      seen.add(key);
+      this.validateExpressionColumns(assignment.value, table);
+      return {
+        schemaName: resolved.schemaName,
+        expression: assignment.value
+      };
+    });
+  }
+
   private resolveColumn(name: string, table: Table): ResolvedColumn {
     try {
       const column = table.getColumn(name);
@@ -249,98 +335,30 @@ export class Executor {
       return;
     }
 
-    if (expression.type === "comparison") {
-      this.resolveColumn(expression.left.name, table);
-      return;
+    switch (expression.type) {
+      case "literal":
+        return;
+      case "column":
+        this.resolveColumn(expression.name, table);
+        return;
+      case "aggregate":
+        throw new ExecutionError({
+          code: "INVALID_AGGREGATE_PLACEMENT",
+          message: "Aggregate functions are not allowed in row-level expressions."
+        });
+      case "unary":
+        this.validateExpressionColumns(expression.operand, table);
+        return;
+      case "null_check":
+        this.validateExpressionColumns(expression.operand, table);
+        return;
+      case "arithmetic":
+      case "comparison":
+      case "logical":
+        this.validateExpressionColumns(expression.left, table);
+        this.validateExpressionColumns(expression.right, table);
+        return;
     }
-
-    this.validateExpressionColumns(expression.left, table);
-    this.validateExpressionColumns(expression.right, table);
-  }
-
-  private validateLimit(limit: number): void {
-    if (!Number.isInteger(limit) || limit < 0) {
-      throw new ExecutionError({
-        code: "INVALID_LIMIT",
-        message: `LIMIT must be a non-negative integer, received ${String(limit)}`,
-        value: limit
-      });
-    }
-  }
-
-  private sortRows(rows: readonly StoredRow[], columnName: string, direction: "ASC" | "DESC"): StoredRow[] {
-    return rows
-      .map((row, index): IndexedRow => ({ row, index }))
-      .sort((left, right) => {
-        const leftValue = left.row[columnName] ?? null;
-        const rightValue = right.row[columnName] ?? null;
-
-        if (leftValue === null || rightValue === null) {
-          const comparison = this.compareNullsLast(leftValue, rightValue);
-
-          if (comparison !== 0) {
-            return comparison;
-          }
-        }
-
-        const comparison = this.compareNonNullSortValues(leftValue, rightValue);
-
-        if (comparison === 0) {
-          return left.index - right.index;
-        }
-
-        return direction === "ASC" ? comparison : -comparison;
-      })
-      .map((entry) => entry.row);
-  }
-
-  private compareNullsLast(left: DatabaseValue, right: DatabaseValue): number {
-    if (left === null && right === null) {
-      return 0;
-    }
-
-    if (left === null) {
-      return 1;
-    }
-
-    if (right === null) {
-      return -1;
-    }
-
-    return 0;
-  }
-
-  private compareNonNullSortValues(left: DatabaseValue, right: DatabaseValue): number {
-    if (left === null || right === null) {
-      return 0;
-    }
-
-    if (typeof left === "boolean" && typeof right === "boolean") {
-      return Number(left) - Number(right);
-    }
-
-    if (typeof left === "number" && typeof right === "number") {
-      return left - right;
-    }
-
-    if (typeof left === "string" && typeof right === "string") {
-      return left.localeCompare(right);
-    }
-
-    throw new ExecutionError({
-      code: "TYPE_MISMATCH",
-      message: `Cannot sort mixed value types ${typeof left} and ${typeof right}`
-    });
-  }
-
-  private projectRow(row: StoredRow, columns: readonly ResolvedColumn[]): Record<string, DatabaseValue> {
-    const projected: Record<string, DatabaseValue> = {};
-
-    for (const column of columns) {
-      projected[column.schemaName] = row[column.schemaName] ?? null;
-    }
-
-    return projected;
   }
 
   private mapDataType(dataType: CreateColumnDataType): DataType {
@@ -374,6 +392,22 @@ export class Executor {
       options.columnName = error.columnName;
     }
 
+    if (error.referencedTableName !== undefined) {
+      options.referencedTableName = error.referencedTableName;
+    }
+
+    if (error.referencedColumnName !== undefined) {
+      options.referencedColumnName = error.referencedColumnName;
+    }
+
+    if (error.referencingTableName !== undefined) {
+      options.referencingTableName = error.referencingTableName;
+    }
+
+    if (error.referencingColumnName !== undefined) {
+      options.referencingColumnName = error.referencingColumnName;
+    }
+
     if ("value" in error) {
       options.value = error.value;
     }
@@ -397,6 +431,38 @@ export class Executor {
         return "TYPE_MISMATCH";
       case "NULL_CONSTRAINT":
         return "NULL_CONSTRAINT";
+      case "NOT_NULL_VIOLATION":
+        return "NOT_NULL_VIOLATION";
+      case "PRIMARY_KEY_VIOLATION":
+        return "PRIMARY_KEY_VIOLATION";
+      case "UNIQUE_CONSTRAINT_VIOLATION":
+        return "UNIQUE_CONSTRAINT_VIOLATION";
+      case "FOREIGN_KEY_VIOLATION":
+        return "FOREIGN_KEY_VIOLATION";
+      case "REFERENCED_ROW_EXISTS":
+        return "REFERENCED_ROW_EXISTS";
+      case "DUPLICATE_PRIMARY_KEY":
+        return "DUPLICATE_PRIMARY_KEY";
+      case "DUPLICATE_CONSTRAINT":
+        return "DUPLICATE_CONSTRAINT";
+      case "INVALID_CONSTRAINT":
+        return "INVALID_CONSTRAINT";
+      case "CONSTRAINT_COLUMN_NOT_FOUND":
+        return "CONSTRAINT_COLUMN_NOT_FOUND";
+      case "REFERENCED_TABLE_NOT_FOUND":
+        return "REFERENCED_TABLE_NOT_FOUND";
+      case "REFERENCED_COLUMN_NOT_FOUND":
+        return "REFERENCED_COLUMN_NOT_FOUND";
+      case "REFERENCED_COLUMN_NOT_UNIQUE":
+        return "REFERENCED_COLUMN_NOT_UNIQUE";
+      case "FOREIGN_KEY_TYPE_MISMATCH":
+        return "FOREIGN_KEY_TYPE_MISMATCH";
+      case "MULTIPLE_PRIMARY_KEYS":
+        return "MULTIPLE_PRIMARY_KEYS";
+      case "UNSUPPORTED_COMPOSITE_KEY":
+        return "UNSUPPORTED_COMPOSITE_KEY";
+      case "UNSUPPORTED_CONSTRAINT":
+        return "UNSUPPORTED_CONSTRAINT";
       case "INVALID_TABLE_NAME":
       case "MISSING_COLUMN":
         return "INVALID_STATEMENT";

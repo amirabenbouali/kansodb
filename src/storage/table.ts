@@ -1,6 +1,8 @@
 import { StorageError } from "../errors/storage-error.js";
 import { type ColumnDefinition, normalizeColumnDefinitions, normalizeColumnName, type StoredColumnDefinition } from "./column.js";
+import type { PrimaryKeyMetadata, UniqueConstraintMetadata } from "./constraint.js";
 import { DataType } from "./data-type.js";
+import type { ForeignKeyMetadata } from "./foreign-key.js";
 import type { DatabaseValue, InputRow, StoredRow } from "./row.js";
 
 export class Table {
@@ -22,6 +24,7 @@ export class Table {
 
     this.tableName = name;
     this.schema = normalizeColumnDefinitions(columns, name);
+    this.validateSchemaConstraints();
     this.columnsByName = new Map(this.schema.map((column) => [normalizeColumnName(column.name), column]));
   }
 
@@ -30,12 +33,82 @@ export class Table {
   }
 
   public getSchema(): StoredColumnDefinition[] {
-    return this.schema.map((column) => ({ ...column }));
+    return this.schema.map((column) => ({
+      ...column,
+      ...(column.references === undefined ? {} : { references: { ...column.references } })
+    }));
+  }
+
+  public get primaryKey(): PrimaryKeyMetadata | undefined {
+    const column = this.schema.find((schemaColumn) => schemaColumn.primaryKey);
+    return column === undefined ? undefined : { columnName: column.name };
+  }
+
+  public get uniqueConstraints(): UniqueConstraintMetadata[] {
+    return this.schema.filter((column) => column.unique).map((column) => ({ columnName: column.name }));
+  }
+
+  public get foreignKeys(): ForeignKeyMetadata[] {
+    return this.schema.flatMap((column) => column.references === undefined ? [] : [{
+      columnName: column.name,
+      referencedTableName: column.references.tableName,
+      referencedColumnName: column.references.columnName
+    }]);
   }
 
   public insert(row: InputRow): StoredRow {
-    const valuesByColumnName = this.mapInputRow(row);
+    const storedRow = this.validateRow(row);
+    this.validateRows([...this.rows, storedRow]);
 
+    this.rows.push(storedRow);
+    return { ...storedRow };
+  }
+
+  public updateRows(predicate: (row: Readonly<StoredRow>) => boolean, updater: (row: Readonly<StoredRow>) => InputRow): number {
+    const replacements: Array<{ index: number; row: StoredRow }> = [];
+
+    this.rows.forEach((row, index) => {
+      const rowSnapshot = { ...row };
+
+      if (!predicate(rowSnapshot)) {
+        return;
+      }
+
+      const replacement = this.validateRow(updater({ ...row }));
+      replacements.push({ index, row: replacement });
+    });
+
+    const proposed = this.rows.map((row, index) => replacements.find((replacement) => replacement.index === index)?.row ?? row);
+    this.validateRows(proposed);
+
+    for (const replacement of replacements) {
+      this.rows[replacement.index] = replacement.row;
+    }
+
+    return replacements.length;
+  }
+
+  public deleteRows(predicate: (row: Readonly<StoredRow>) => boolean): number {
+    const remainingRows: StoredRow[] = [];
+    let deletedCount = 0;
+
+    for (const row of this.rows) {
+      if (predicate({ ...row })) {
+        deletedCount += 1;
+        continue;
+      }
+
+      remainingRows.push(row);
+    }
+
+    this.rows.length = 0;
+    this.rows.push(...remainingRows);
+
+    return deletedCount;
+  }
+
+  private validateRow(row: InputRow): StoredRow {
+    const valuesByColumnName = this.mapInputRow(row);
     const storedRow: StoredRow = {};
 
     for (const column of this.schema) {
@@ -58,8 +131,7 @@ export class Table {
       storedRow[column.name] = this.validateValue(column, value);
     }
 
-    this.rows.push(storedRow);
-    return { ...storedRow };
+    return storedRow;
   }
 
   public getRows(): StoredRow[] {
@@ -86,11 +158,87 @@ export class Table {
       });
     }
 
-    return { ...column };
+    return {
+      ...column,
+      ...(column.references === undefined ? {} : { references: { ...column.references } })
+    };
   }
 
   public clear(): void {
     this.rows.length = 0;
+  }
+
+  public validateInputRow(row: InputRow): StoredRow {
+    return this.validateRow(row);
+  }
+
+  public replaceRows(rows: readonly StoredRow[]): void {
+    this.validateRows(rows);
+    this.rows.length = 0;
+    this.rows.push(...rows.map((row) => ({ ...row })));
+  }
+
+  public validateRows(rows: readonly StoredRow[]): void {
+    for (const column of this.schema) {
+      if (column.primaryKey) {
+        this.validateUniqueColumn(rows, column, "PRIMARY_KEY_VIOLATION");
+      } else if (column.unique) {
+        this.validateUniqueColumn(rows, column, "UNIQUE_CONSTRAINT_VIOLATION");
+      }
+    }
+  }
+
+  private validateSchemaConstraints(): void {
+    const primaryKeys = this.schema.filter((column) => column.primaryKey);
+    if (primaryKeys.length > 1) {
+      throw new StorageError({
+        code: "MULTIPLE_PRIMARY_KEYS",
+        message: `Table "${this.tableName}" declares more than one primary key.`,
+        tableName: this.tableName
+      });
+    }
+
+    for (const column of primaryKeys) {
+      if (column.nullable) {
+        throw new StorageError({
+          code: "INVALID_CONSTRAINT",
+          message: `Primary key column "${column.name}" cannot be nullable.`,
+          tableName: this.tableName,
+          columnName: column.name
+        });
+      }
+    }
+  }
+
+  private validateUniqueColumn(rows: readonly StoredRow[], column: StoredColumnDefinition, code: "PRIMARY_KEY_VIOLATION" | "UNIQUE_CONSTRAINT_VIOLATION"): void {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const value = row[column.name] ?? null;
+      if (value === null) {
+        if (column.primaryKey) {
+          throw new StorageError({
+            code: "PRIMARY_KEY_VIOLATION",
+            message: `Primary key violation on ${this.tableName}.${column.name} for null value.`,
+            tableName: this.tableName,
+            columnName: column.name,
+            value
+          });
+        }
+        continue;
+      }
+
+      const key = JSON.stringify([typeof value, value]);
+      if (seen.has(key)) {
+        throw new StorageError({
+          code,
+          message: `${code === "PRIMARY_KEY_VIOLATION" ? "Primary key" : "Unique constraint"} violation on ${this.tableName}.${column.name}.`,
+          tableName: this.tableName,
+          columnName: column.name,
+          value
+        });
+      }
+      seen.add(key);
+    }
   }
 
   private mapInputRow(row: InputRow): Map<string, DatabaseValue | undefined> {
@@ -130,7 +278,7 @@ export class Table {
       }
 
       throw new StorageError({
-        code: "NULL_CONSTRAINT",
+        code: "NOT_NULL_VIOLATION",
         message: `Column "${column.name}" does not allow null values`,
         tableName: this.tableName,
         columnName: column.name,

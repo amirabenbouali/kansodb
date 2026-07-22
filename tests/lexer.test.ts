@@ -56,6 +56,32 @@ describe("lexer", () => {
     expect(tokens[1]?.lexeme).toBe("Name");
   });
 
+  it("tokenizes constraint keywords", () => {
+    expect(withoutEof(tokenize("PRIMARY KEY FOREIGN REFERENCES UNIQUE NOT NULL CONSTRAINT")).map((token) => token.type)).toEqual([
+      TokenType.Primary,
+      TokenType.Key,
+      TokenType.Foreign,
+      TokenType.References,
+      TokenType.Unique,
+      TokenType.Not,
+      TokenType.Null,
+      TokenType.Constraint
+    ]);
+  });
+
+  it("tokenizes lowercase and mixed-case constraint keywords", () => {
+    expect(withoutEof(tokenize("primary key Foreign references Unique not null Constraint")).map((token) => token.type)).toEqual([
+      TokenType.Primary,
+      TokenType.Key,
+      TokenType.Foreign,
+      TokenType.References,
+      TokenType.Unique,
+      TokenType.Not,
+      TokenType.Null,
+      TokenType.Constraint
+    ]);
+  });
+
   it("tokenizes identifiers containing underscores and numbers", () => {
     const tokens = withoutEof(tokenize("SELECT employee_1, _dept2 FROM table_2026"));
 
@@ -124,6 +150,103 @@ describe("lexer", () => {
       TokenType.Equal,
       TokenType.True,
       TokenType.RightParen
+    ]);
+  });
+
+  it("tokenizes join keywords and qualified column dots", () => {
+    const tokens = withoutEof(tokenize("SELECT e.name FROM employees AS e INNER JOIN departments d ON e.department_id = d.id"));
+
+    expect(tokens.map((token) => token.type)).toEqual([
+      TokenType.Select,
+      TokenType.Identifier,
+      TokenType.Dot,
+      TokenType.Identifier,
+      TokenType.From,
+      TokenType.Identifier,
+      TokenType.As,
+      TokenType.Identifier,
+      TokenType.Inner,
+      TokenType.Join,
+      TokenType.Identifier,
+      TokenType.Identifier,
+      TokenType.On,
+      TokenType.Identifier,
+      TokenType.Dot,
+      TokenType.Identifier,
+      TokenType.Equal,
+      TokenType.Identifier,
+      TokenType.Dot,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("keeps decimals as one token while dot separates qualified names", () => {
+    const tokens = withoutEof(tokenize("SELECT 12.5, employees.id FROM employees"));
+
+    expect(tokens.map((token) => token.type)).toEqual([
+      TokenType.Select,
+      TokenType.Decimal,
+      TokenType.Comma,
+      TokenType.Identifier,
+      TokenType.Dot,
+      TokenType.Identifier,
+      TokenType.From,
+      TokenType.Identifier
+    ]);
+    expect(tokens[1]).toMatchObject({ lexeme: "12.5", literal: 12.5 });
+  });
+
+  it("tokenizes arithmetic operators", () => {
+    expect(withoutEof(tokenize("salary+bonus-1*2/3%4")).map((token) => token.type)).toEqual([
+      TokenType.Identifier,
+      TokenType.Plus,
+      TokenType.Identifier,
+      TokenType.Minus,
+      TokenType.Integer,
+      TokenType.Star,
+      TokenType.Integer,
+      TokenType.Slash,
+      TokenType.Integer,
+      TokenType.Percent,
+      TokenType.Integer
+    ]);
+  });
+
+  it("tokenizes unary minus input as an operator and literal", () => {
+    expect(withoutEof(tokenize("-12.5")).map((token) => token.type)).toEqual([TokenType.Minus, TokenType.Decimal]);
+  });
+
+  it("tokenizes left join and null predicates", () => {
+    expect(withoutEof(tokenize("LEFT JOIN IS NULL IS NOT NULL NULLS FIRST NULLS LAST")).map((token) => token.type)).toEqual([
+      TokenType.Left,
+      TokenType.Join,
+      TokenType.Is,
+      TokenType.Null,
+      TokenType.Is,
+      TokenType.Not,
+      TokenType.Null,
+      TokenType.Nulls,
+      TokenType.First,
+      TokenType.Nulls,
+      TokenType.Last
+    ]);
+  });
+
+  it("tokenizes lowercase and mixed-case null keywords", () => {
+    expect(withoutEof(tokenize("left join is null nulls first LeFt JoIn Is NoT NuLl NuLlS LaSt")).map((token) => token.type)).toEqual([
+      TokenType.Left,
+      TokenType.Join,
+      TokenType.Is,
+      TokenType.Null,
+      TokenType.Nulls,
+      TokenType.First,
+      TokenType.Left,
+      TokenType.Join,
+      TokenType.Is,
+      TokenType.Not,
+      TokenType.Null,
+      TokenType.Nulls,
+      TokenType.Last
     ]);
   });
 
@@ -244,6 +367,100 @@ LIMIT 5;`;
       TokenType.TextType,
       TokenType.Not,
       TokenType.Null
+    ]);
+  });
+
+  it("tokenizes UPDATE", () => {
+    expect(withoutEof(tokenize("UPDATE employees")).map((token) => token.type)).toEqual([
+      TokenType.Update,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("tokenizes SET", () => {
+    expect(withoutEof(tokenize("SET salary = 50000")).map((token) => token.type)).toEqual([
+      TokenType.Set,
+      TokenType.Identifier,
+      TokenType.Equal,
+      TokenType.Integer
+    ]);
+  });
+
+  it("tokenizes DELETE FROM", () => {
+    expect(withoutEof(tokenize("DELETE FROM employees")).map((token) => token.type)).toEqual([
+      TokenType.Delete,
+      TokenType.From,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("tokenizes lowercase mutation keywords", () => {
+    expect(withoutEof(tokenize("update employees set active = false delete from employees")).map((token) => token.type)).toEqual([
+      TokenType.Update,
+      TokenType.Identifier,
+      TokenType.Set,
+      TokenType.Identifier,
+      TokenType.Equal,
+      TokenType.False,
+      TokenType.Delete,
+      TokenType.From,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("tokenizes mixed-case mutation keywords", () => {
+    expect(withoutEof(tokenize("UpDaTe employees SeT active = FALSE DeLeTe FrOm employees")).map((token) => token.type)).toEqual([
+      TokenType.Update,
+      TokenType.Identifier,
+      TokenType.Set,
+      TokenType.Identifier,
+      TokenType.Equal,
+      TokenType.False,
+      TokenType.Delete,
+      TokenType.From,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("tokenizes aggregate function keywords", () => {
+    expect(withoutEof(tokenize("COUNT SUM AVG MIN MAX")).map((token) => token.type)).toEqual([
+      TokenType.Count,
+      TokenType.Sum,
+      TokenType.Avg,
+      TokenType.Min,
+      TokenType.Max
+    ]);
+  });
+
+  it("tokenizes GROUP BY", () => {
+    expect(withoutEof(tokenize("GROUP BY department")).map((token) => token.type)).toEqual([
+      TokenType.Group,
+      TokenType.By,
+      TokenType.Identifier
+    ]);
+  });
+
+  it("tokenizes lowercase aggregate forms", () => {
+    expect(withoutEof(tokenize("count sum avg min max group by")).map((token) => token.type)).toEqual([
+      TokenType.Count,
+      TokenType.Sum,
+      TokenType.Avg,
+      TokenType.Min,
+      TokenType.Max,
+      TokenType.Group,
+      TokenType.By
+    ]);
+  });
+
+  it("tokenizes mixed-case aggregate forms", () => {
+    expect(withoutEof(tokenize("CoUnT SuM AvG MiN MaX GrOuP bY")).map((token) => token.type)).toEqual([
+      TokenType.Count,
+      TokenType.Sum,
+      TokenType.Avg,
+      TokenType.Min,
+      TokenType.Max,
+      TokenType.Group,
+      TokenType.By
     ]);
   });
 });

@@ -4,6 +4,8 @@ import {
   ExecutionError,
   Table,
   evaluateExpression,
+  evaluatePredicate,
+  tableContext,
   type Expression,
   type StoredRow
 } from "../../src/index.js";
@@ -33,6 +35,14 @@ function comparison(column: string, operator: "=" | "!=" | ">" | ">=" | "<" | "<
     operator,
     left: { type: "column", name: column },
     right: { type: "literal", value }
+  };
+}
+
+function nullCheck(column: string, negated = false): Expression {
+  return {
+    type: "null_check",
+    operand: { type: "column", name: column },
+    negated
   };
 }
 
@@ -88,11 +98,15 @@ describe("evaluateExpression", () => {
   });
 
   it("evaluates null equality", () => {
-    expect(evaluateExpression(comparison("salary", "=", null), row({ salary: null }), createTable())).toBe(true);
+    const table = createTable();
+    expect(evaluatePredicate(comparison("salary", "=", null), tableContext(row({ salary: null }), table))).toBe("UNKNOWN");
+    expect(evaluateExpression(comparison("salary", "=", null), row({ salary: null }), table)).toBe(false);
   });
 
   it("evaluates null inequality", () => {
-    expect(evaluateExpression(comparison("salary", "!=", null), row({ salary: 48000 }), createTable())).toBe(true);
+    const table = createTable();
+    expect(evaluatePredicate(comparison("salary", "!=", null), tableContext(row({ salary: 48000 }), table))).toBe("UNKNOWN");
+    expect(evaluateExpression(comparison("salary", "!=", null), row({ salary: 48000 }), table)).toBe(false);
     expect(evaluateExpression(comparison("salary", "!=", null), row({ salary: null }), createTable())).toBe(false);
   });
 
@@ -108,8 +122,27 @@ describe("evaluateExpression", () => {
     expectExecutionError(() => evaluateExpression(comparison("active", ">", false), row(), createTable()), "INVALID_COMPARISON");
   });
 
-  it("rejects null ordering comparisons", () => {
-    expectExecutionError(() => evaluateExpression(comparison("salary", ">", null), row(), createTable()), "INVALID_COMPARISON");
+  it("evaluates null ordering comparisons as unknown", () => {
+    const table = createTable();
+    expect(evaluatePredicate(comparison("salary", ">", null), tableContext(row(), table))).toBe("UNKNOWN");
+    expect(evaluateExpression(comparison("salary", ">", null), row(), table)).toBe(false);
+  });
+
+  it("evaluates null predicates", () => {
+    const table = createTable();
+    expect(evaluatePredicate(nullCheck("salary"), tableContext(row({ salary: null }), table))).toBe("TRUE");
+    expect(evaluatePredicate(nullCheck("salary"), tableContext(row({ salary: 1 }), table))).toBe("FALSE");
+    expect(evaluatePredicate(nullCheck("salary", true), tableContext(row({ salary: null }), table))).toBe("FALSE");
+    expect(evaluatePredicate(nullCheck("salary", true), tableContext(row({ salary: 1 }), table))).toBe("TRUE");
+  });
+
+  it("propagates unknown through logical predicates", () => {
+    const table = createTable();
+    const unknown = comparison("salary", "=", null);
+    expect(evaluatePredicate({ type: "logical", operator: "AND", left: unknown, right: { type: "literal", value: true } }, tableContext(row(), table))).toBe("UNKNOWN");
+    expect(evaluatePredicate({ type: "logical", operator: "AND", left: unknown, right: { type: "literal", value: false } }, tableContext(row(), table))).toBe("FALSE");
+    expect(evaluatePredicate({ type: "logical", operator: "OR", left: unknown, right: { type: "literal", value: true } }, tableContext(row(), table))).toBe("TRUE");
+    expect(evaluatePredicate({ type: "logical", operator: "OR", left: unknown, right: { type: "literal", value: false } }, tableContext(row(), table))).toBe("UNKNOWN");
   });
 
   it("evaluates AND expressions", () => {

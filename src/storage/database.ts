@@ -1,5 +1,6 @@
 import { StorageError } from "../errors/storage-error.js";
 import type { ColumnDefinition } from "./column.js";
+import type { DatabaseValue, InputRow, StoredRow } from "./row.js";
 import { Table } from "./table.js";
 
 export class Database {
@@ -17,9 +18,89 @@ export class Database {
       });
     }
 
-    const table = new Table(name, columns);
+    const table = new Table(name, this.canonicalizeReferences(name, columns));
+    this.validateCreateTableConstraints(table);
     this.tables.set(key, table);
     return table;
+  }
+
+  private canonicalizeReferences(tableName: string, columns: readonly ColumnDefinition[]): ColumnDefinition[] {
+    return columns.map((column) => {
+      if (column.references === undefined) {
+        return { ...column };
+      }
+
+      const referencedTable = this.resolveReferencedTableName(tableName, column.name, column.references.tableName);
+      const referencedColumn = this.resolveReferencedColumnName(tableName, column.name, columns, referencedTable, column.references.columnName);
+
+      return {
+        ...column,
+        references: {
+          tableName: referencedTable.name,
+          columnName: referencedColumn
+        }
+      };
+    });
+  }
+
+  private resolveReferencedTableName(
+    tableName: string,
+    columnName: string,
+    referencedTableName: string
+  ): { name: string; columns?: readonly ColumnDefinition[]; table?: Table } {
+    if (this.normalizeTableName(tableName) === this.normalizeTableName(referencedTableName)) {
+      return { name: tableName };
+    }
+
+    const table = this.tables.get(this.normalizeTableName(referencedTableName));
+    if (table === undefined) {
+      throw new StorageError({
+        code: "REFERENCED_TABLE_NOT_FOUND",
+        message: `Referenced table "${referencedTableName}" was not found.`,
+        tableName,
+        columnName,
+        referencedTableName
+      });
+    }
+
+    return { name: table.name, table };
+  }
+
+  private resolveReferencedColumnName(
+    tableName: string,
+    columnName: string,
+    newTableColumns: readonly ColumnDefinition[],
+    referencedTable: { name: string; table?: Table },
+    referencedColumnName: string
+  ): string {
+    if (referencedTable.table !== undefined) {
+      try {
+        return referencedTable.table.getColumn(referencedColumnName).name;
+      } catch {
+        throw new StorageError({
+          code: "REFERENCED_COLUMN_NOT_FOUND",
+          message: `Referenced column "${referencedColumnName}" was not found in table "${referencedTable.name}".`,
+          tableName,
+          columnName,
+          referencedTableName: referencedTable.name,
+          referencedColumnName
+        });
+      }
+    }
+
+    const column = newTableColumns.find((candidate) => candidate.name.toLowerCase() === referencedColumnName.toLowerCase());
+    if (column === undefined) {
+      throw new StorageError({
+        code: "REFERENCED_COLUMN_NOT_FOUND",
+        message: `Referenced column "${referencedColumnName}" was not found in table "${referencedTable.name}".`,
+        tableName,
+        columnName,
+        referencedTableName: referencedTable.name,
+        referencedColumnName
+      });
+    }
+
+    return column.name;
   }
 
   public getTable(name: string): Table {
@@ -45,6 +126,8 @@ export class Database {
   }
 
   public dropTable(name: string): void {
+    const table = this.getTable(name);
+    this.validateIncomingReferences(table, []);
     const key = this.normalizeTableName(name);
 
     if (!this.tables.delete(key)) {
@@ -54,6 +137,238 @@ export class Database {
         tableName: name
       });
     }
+  }
+
+  public insertInto(tableName: string, row: InputRow): StoredRow {
+    const table = this.getTable(tableName);
+    const storedRow = table.validateInputRow(row);
+    const proposedRows = [...table.getRows(), storedRow];
+
+    this.validateTableState(table, proposedRows);
+    table.replaceRows(proposedRows);
+    return { ...storedRow };
+  }
+
+  public updateRows(
+    tableName: string,
+    predicate: (row: Readonly<StoredRow>) => boolean,
+    updater: (row: Readonly<StoredRow>) => InputRow
+  ): number {
+    const table = this.getTable(tableName);
+    const currentRows = table.getRows();
+    let affectedRows = 0;
+    const proposedRows = currentRows.map((row) => {
+      const snapshot = { ...row };
+
+      if (!predicate(snapshot)) {
+        return row;
+      }
+
+      affectedRows += 1;
+      return table.validateInputRow(updater({ ...row }));
+    });
+
+    this.validateTableState(table, proposedRows);
+    table.replaceRows(proposedRows);
+    return affectedRows;
+  }
+
+  public deleteRows(tableName: string, predicate: (row: Readonly<StoredRow>) => boolean): number {
+    const table = this.getTable(tableName);
+    const remainingRows: StoredRow[] = [];
+    let affectedRows = 0;
+
+    for (const row of table.getRows()) {
+      if (predicate({ ...row })) {
+        affectedRows += 1;
+        continue;
+      }
+
+      remainingRows.push(row);
+    }
+
+    this.validateTableState(table, remainingRows);
+    table.replaceRows(remainingRows);
+    return affectedRows;
+  }
+
+  public validateInsert(tableName: string, row: StoredRow): void {
+    const table = this.getTable(tableName);
+    this.validateTableState(table, [...table.getRows(), row]);
+  }
+
+  public validateUpdate(tableName: string, proposedRows: readonly StoredRow[]): void {
+    this.validateTableState(this.getTable(tableName), proposedRows);
+  }
+
+  public validateDelete(tableName: string, remainingRows: readonly StoredRow[]): void {
+    this.validateTableState(this.getTable(tableName), remainingRows);
+  }
+
+  private validateCreateTableConstraints(table: Table): void {
+    for (const foreignKey of table.foreignKeys) {
+      const localColumn = table.getColumn(foreignKey.columnName);
+      const referencedTable = this.resolveReferencedTable(table, foreignKey.referencedTableName);
+      const referencedColumn = this.resolveReferencedColumn({
+        tableName: table.name,
+        columnName: localColumn.name,
+        referencedTable,
+        referencedColumnName: foreignKey.referencedColumnName
+      });
+
+      if (!referencedColumn.primaryKey && !referencedColumn.unique) {
+        throw new StorageError({
+          code: "REFERENCED_COLUMN_NOT_UNIQUE",
+          message: `Referenced column "${referencedTable.name}.${referencedColumn.name}" must be primary key or unique.`,
+          tableName: table.name,
+          columnName: localColumn.name,
+          referencedTableName: referencedTable.name,
+          referencedColumnName: referencedColumn.name
+        });
+      }
+
+      if (localColumn.type !== referencedColumn.type) {
+        throw new StorageError({
+          code: "FOREIGN_KEY_TYPE_MISMATCH",
+          message: `Foreign key "${table.name}.${localColumn.name}" type must match "${referencedTable.name}.${referencedColumn.name}".`,
+          tableName: table.name,
+          columnName: localColumn.name,
+          referencedTableName: referencedTable.name,
+          referencedColumnName: referencedColumn.name
+        });
+      }
+    }
+  }
+
+  private validateTableState(table: Table, proposedRows: readonly StoredRow[]): void {
+    table.validateRows(proposedRows);
+    this.validateOutgoingForeignKeys(table, proposedRows);
+    this.validateIncomingReferences(table, proposedRows);
+  }
+
+  private validateOutgoingForeignKeys(table: Table, proposedRows: readonly StoredRow[]): void {
+    for (const foreignKey of table.foreignKeys) {
+      const referencedTable = this.resolveReferencedTable(table, foreignKey.referencedTableName);
+      const referencedColumn = this.resolveReferencedColumn({
+        tableName: table.name,
+        columnName: foreignKey.columnName,
+        referencedTable,
+        referencedColumnName: foreignKey.referencedColumnName
+      });
+      const referencedRows = this.isSameTable(table, referencedTable) ? proposedRows : referencedTable.getRows();
+
+      for (const row of proposedRows) {
+        const value = row[foreignKey.columnName] ?? null;
+        if (value === null) {
+          continue;
+        }
+
+        if (!this.hasMatchingValue(referencedRows, referencedColumn.name, value)) {
+          throw new StorageError({
+            code: "FOREIGN_KEY_VIOLATION",
+            message: `Foreign key violation: ${table.name}.${foreignKey.columnName} references ${referencedTable.name}.${referencedColumn.name}.`,
+            tableName: table.name,
+            columnName: foreignKey.columnName,
+            value,
+            referencedTableName: referencedTable.name,
+            referencedColumnName: referencedColumn.name
+          });
+        }
+      }
+    }
+  }
+
+  private validateIncomingReferences(table: Table, proposedRows: readonly StoredRow[]): void {
+    for (const referencingTable of this.tables.values()) {
+      const referencingRows = this.isSameTable(table, referencingTable) ? proposedRows : referencingTable.getRows();
+
+      for (const foreignKey of referencingTable.foreignKeys) {
+        const referencedTable = this.resolveReferencedTable(referencingTable, foreignKey.referencedTableName);
+        if (!this.isSameTable(table, referencedTable)) {
+          continue;
+        }
+
+        const referencedColumn = this.resolveReferencedColumn({
+          tableName: referencingTable.name,
+          columnName: foreignKey.columnName,
+          referencedTable,
+          referencedColumnName: foreignKey.referencedColumnName
+        });
+
+        for (const row of referencingRows) {
+          const value = row[foreignKey.columnName] ?? null;
+          if (value === null) {
+            continue;
+          }
+
+          if (!this.hasMatchingValue(proposedRows, referencedColumn.name, value)) {
+            throw new StorageError({
+              code: "REFERENCED_ROW_EXISTS",
+              message: `Cannot change ${table.name}.${referencedColumn.name} value ${this.describeValue(value)} because ${referencingTable.name}.${foreignKey.columnName} still references it.`,
+              tableName: table.name,
+              columnName: referencedColumn.name,
+              value,
+              referencingTableName: referencingTable.name,
+              referencingColumnName: foreignKey.columnName
+            });
+          }
+        }
+      }
+    }
+  }
+
+  private resolveReferencedTable(localTable: Table, referencedTableName: string): Table {
+    if (this.normalizeTableName(localTable.name) === this.normalizeTableName(referencedTableName)) {
+      return localTable;
+    }
+
+    const referencedTable = this.tables.get(this.normalizeTableName(referencedTableName));
+    if (referencedTable === undefined) {
+      throw new StorageError({
+        code: "REFERENCED_TABLE_NOT_FOUND",
+        message: `Referenced table "${referencedTableName}" was not found.`,
+        tableName: localTable.name,
+        referencedTableName
+      });
+    }
+
+    return referencedTable;
+  }
+
+  private resolveReferencedColumn(options: {
+    tableName: string;
+    columnName: string;
+    referencedTable: Table;
+    referencedColumnName: string;
+  }): ReturnType<Table["getColumn"]> {
+    try {
+      return options.referencedTable.getColumn(options.referencedColumnName);
+    } catch {
+      throw new StorageError({
+        code: "REFERENCED_COLUMN_NOT_FOUND",
+        message: `Referenced column "${options.referencedColumnName}" was not found in table "${options.referencedTable.name}".`,
+        tableName: options.tableName,
+        columnName: options.columnName,
+        referencedTableName: options.referencedTable.name,
+        referencedColumnName: options.referencedColumnName
+      });
+    }
+  }
+
+  private hasMatchingValue(rows: readonly StoredRow[], columnName: string, value: DatabaseValue): boolean {
+    return rows.some((row) => Object.is(row[columnName], value));
+  }
+
+  private isSameTable(left: Table, right: Table): boolean {
+    return this.normalizeTableName(left.name) === this.normalizeTableName(right.name);
+  }
+
+  private describeValue(value: DatabaseValue): string {
+    if (value === null) {
+      return "NULL";
+    }
+
+    return JSON.stringify(value);
   }
 
   private validateTableName(name: string): void {

@@ -24,8 +24,8 @@ describe("CREATE TABLE execution", () => {
     executeSql(database, "CREATE TABLE employees (id INTEGER, name TEXT)");
 
     expect(database.getTable("employees").getSchema()).toEqual([
-      { name: "id", type: DataType.INTEGER, nullable: false },
-      { name: "name", type: DataType.TEXT, nullable: false }
+      { name: "id", type: DataType.INTEGER, nullable: false, unique: false, primaryKey: false },
+      { name: "name", type: DataType.TEXT, nullable: false, unique: false, primaryKey: false }
     ]);
   });
 
@@ -46,8 +46,8 @@ describe("CREATE TABLE execution", () => {
     executeSql(database, "CREATE TABLE t (a INTEGER NOT NULL, b DECIMAL NULL)");
 
     expect(database.getTable("t").getSchema()).toEqual([
-      { name: "a", type: DataType.INTEGER, nullable: false },
-      { name: "b", type: DataType.DECIMAL, nullable: true }
+      { name: "a", type: DataType.INTEGER, nullable: false, unique: false, primaryKey: false },
+      { name: "b", type: DataType.DECIMAL, nullable: true, unique: false, primaryKey: false }
     ]);
   });
 
@@ -78,7 +78,7 @@ describe("CREATE TABLE execution", () => {
     const statement: CreateTableStatement = {
       type: "create_table",
       tableName: "",
-      columns: [{ name: "id", dataType: "INTEGER", nullable: false }]
+      columns: [{ name: "id", dataType: "INTEGER", nullable: false, unique: false, primaryKey: false }]
     };
 
     expectExecutionError(() => new Executor(new Database()).execute(statement), "INVALID_STATEMENT");
@@ -88,7 +88,7 @@ describe("CREATE TABLE execution", () => {
     const statement: CreateTableStatement = {
       type: "create_table",
       tableName: "employees",
-      columns: [{ name: "", dataType: "INTEGER", nullable: false }]
+      columns: [{ name: "", dataType: "INTEGER", nullable: false, unique: false, primaryKey: false }]
     };
 
     expectExecutionError(() => new Executor(new Database()).execute(statement), "COLUMN_NOT_FOUND");

@@ -1,16 +1,23 @@
 import { StorageError } from "../errors/storage-error.js";
 import type { DataType } from "./data-type.js";
+import type { ForeignKeyReference } from "./foreign-key.js";
 
 export interface ColumnDefinition {
   name: string;
   type: DataType;
   nullable?: boolean;
+  unique?: boolean;
+  primaryKey?: boolean;
+  references?: ForeignKeyReference;
 }
 
 export interface StoredColumnDefinition {
   name: string;
   type: DataType;
   nullable: boolean;
+  unique: boolean;
+  primaryKey: boolean;
+  references?: ForeignKeyReference;
 }
 
 export function normalizeColumnDefinitions(columns: readonly ColumnDefinition[], tableName: string): StoredColumnDefinition[] {
@@ -43,7 +50,10 @@ export function normalizeColumnDefinitions(columns: readonly ColumnDefinition[],
     return {
       name: column.name,
       type: column.type,
-      nullable: column.nullable ?? false
+      nullable: column.primaryKey === true ? false : column.nullable ?? false,
+      unique: column.primaryKey === true ? true : column.unique ?? false,
+      primaryKey: column.primaryKey ?? false,
+      ...(column.references === undefined ? {} : { references: { ...column.references } })
     };
   });
 }

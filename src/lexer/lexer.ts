@@ -63,8 +63,20 @@ export class Lexer {
       case "<":
         this.addToken(this.match("=") ? TokenType.LessEqual : TokenType.Less);
         return;
+      case "+":
+        this.addToken(TokenType.Plus);
+        return;
       case "-":
         this.addToken(TokenType.Minus);
+        return;
+      case "/":
+        this.addToken(TokenType.Slash);
+        return;
+      case "%":
+        this.addToken(TokenType.Percent);
+        return;
+      case ".":
+        this.addToken(TokenType.Dot);
         return;
       case "'":
         this.scanString();

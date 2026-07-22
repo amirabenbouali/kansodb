@@ -48,7 +48,7 @@ export class PersistenceManager {
   public async save(snapshot: DatabaseSnapshot): Promise<SaveResult> {
     await this.recover();
     const payload = this.codec.encode(snapshot);
-    const bytesWritten = Buffer.byteLength(payload, "utf8");
+    const bytesWritten = new TextEncoder().encode(payload).byteLength;
 
     try {
       await this.fileAdapter.ensureDirectory(this.path);

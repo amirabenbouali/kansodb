@@ -4,7 +4,6 @@ import type { ScriptExecutionOptions, ScriptExecutionResult } from "../execution
 import type { StatementResult } from "../execution/statement-result.js";
 import { DatabaseCodec } from "../persistence/database-codec.js";
 import type { FileAdapter } from "../persistence/file-adapter.js";
-import { NodeFileAdapter } from "../persistence/node-file-adapter.js";
 import { PersistenceManager, type SaveResult } from "../persistence/persistence-manager.js";
 import type { ColumnDefinition } from "./column.js";
 import type { DatabaseValue, InputRow, StoredRow } from "./row.js";
@@ -51,9 +50,10 @@ export class Database {
       return database;
     }
 
+    const fileAdapter = options.fileAdapter ?? await Database.createDefaultFileAdapter();
     const persistenceManager = new PersistenceManager(
       options.path,
-      options.fileAdapter ?? new NodeFileAdapter(),
+      fileAdapter,
       new DatabaseCodec()
     );
     database.persistenceManager = persistenceManager;
@@ -71,6 +71,12 @@ export class Database {
     }
 
     return database;
+  }
+
+  private static async createDefaultFileAdapter(): Promise<FileAdapter> {
+    const modulePath = "../persistence/node-file-adapter.js";
+    const adapterModule = await import(modulePath) as { NodeFileAdapter: new () => FileAdapter };
+    return new adapterModule.NodeFileAdapter();
   }
 
   public createTable(name: string, columns: readonly ColumnDefinition[]): Table {

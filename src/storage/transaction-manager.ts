@@ -5,6 +5,7 @@ import type { TransactionAction, TransactionSnapshot, TransactionState } from ".
 export class TransactionManager {
   private readonly database: Database;
   private activeSnapshot: TransactionSnapshot | undefined;
+  private activeDirtySnapshot: boolean | undefined;
 
   public constructor(database: Database) {
     this.database = database;
@@ -25,6 +26,7 @@ export class TransactionManager {
 
     try {
       this.activeSnapshot = this.database.createSnapshot();
+      this.activeDirtySnapshot = this.database.getPersistenceDirtySnapshot();
     } catch (error) {
       if (error instanceof TransactionError) {
         throw error;
@@ -45,6 +47,7 @@ export class TransactionManager {
     }
 
     this.activeSnapshot = undefined;
+    this.activeDirtySnapshot = undefined;
   }
 
   public rollback(): void {
@@ -56,7 +59,11 @@ export class TransactionManager {
 
     try {
       this.database.restoreSnapshot(snapshot);
+      if (this.activeDirtySnapshot !== undefined) {
+        this.database.restorePersistenceDirtySnapshot(this.activeDirtySnapshot);
+      }
       this.activeSnapshot = undefined;
+      this.activeDirtySnapshot = undefined;
     } catch (error) {
       if (error instanceof TransactionError) {
         throw error;

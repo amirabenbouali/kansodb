@@ -1,6 +1,6 @@
 {
   "name": "kansodb",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "A small SQL query engine built from scratch in TypeScript.",
   "type": "module",
   "main": "dist/index.js",

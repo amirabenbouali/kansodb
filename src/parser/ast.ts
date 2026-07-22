@@ -14,7 +14,8 @@ export type Statement =
   | DeleteStatement
   | BeginTransactionStatement
   | CommitTransactionStatement
-  | RollbackTransactionStatement;
+  | RollbackTransactionStatement
+  | SaveDatabaseStatement;
 
 export interface SelectStatement {
   type: "select";
@@ -96,6 +97,10 @@ export interface CommitTransactionStatement {
 
 export interface RollbackTransactionStatement {
   type: "rollback_transaction";
+}
+
+export interface SaveDatabaseStatement {
+  type: "save_database";
 }
 
 export interface AggregateExpression {

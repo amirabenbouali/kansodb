@@ -2,145 +2,147 @@
 
 > A SQL query engine built from scratch in TypeScript.
 
-KansoDB is an educational relational database engine that explores how SQL databases work internally. Rather than relying on PostgreSQL, SQLite, or MySQL, every stage of the query lifecycle is implemented from scratch—from reading SQL text to producing query results.
+KansoDB is an educational relational database engine that explores how SQL databases work internally. It implements the query lifecycle in TypeScript, from SQL text to tokens, ASTs, execution, constraints, transactions, and optional JSON-file persistence.
 
-The goal of this project is to understand and demonstrate the core concepts behind relational databases, query execution, and language parsing while following modern software engineering practices.
+## Current Features
 
----
+* SQL lexer and recursive-descent parser
+* Basic `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`, joins, grouping, aggregates, aliases, and computed expressions
+* `CREATE TABLE`, `INSERT`, `UPDATE`, and `DELETE`
+* In-memory relational tables with typed columns and rows
+* `PRIMARY KEY`, `UNIQUE`, `NOT NULL`, and foreign-key enforcement
+* Explicit `BEGIN`, `COMMIT`, and `ROLLBACK`
+* Atomic script execution
+* Optional JSON persistence with explicit `SAVE`
+* Startup recovery from interrupted saves
+* TypeScript, Vitest, and modular architecture
 
-## Features
+## In-Memory Usage
 
-### SQL Parsing
+```ts
+import { Database, executeSql } from "kansodb";
 
-* Lexical analysis (tokenization)
-* Recursive descent parser
-* Abstract Syntax Tree (AST)
+const database = new Database();
 
-### Query Execution
+executeSql(database, `
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+  );
+`);
 
-* In-memory relational storage
-* Table scanning
-* Filtering (`WHERE`)
-* Column projection (`SELECT`)
-* Sorting (`ORDER BY`)
-* Result limiting (`LIMIT`)
+executeSql(database, "INSERT INTO users VALUES (1, 'Amira');");
+```
 
-### Storage
+## File-Backed Usage
 
-* Relational tables
-* Typed columns
-* Rows
-* Schema validation
+```ts
+import { Database } from "kansodb";
 
-### Developer Experience
+const database = await Database.open({
+  path: "./data/kanso.db.json",
+  autoSave: "on-commit"
+});
 
-* TypeScript
-* Unit tests
-* Modular architecture
-* CLI interface
+await database.executeSql(`
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+  );
+`);
 
----
+await database.executeSql("INSERT INTO users VALUES (1, 'Amira');");
+await database.executeSql("SAVE;");
+```
 
-## Roadmap
+Opening a missing path creates an empty in-memory database associated with that path. The file is created only after `SAVE` or an enabled auto-save writes it.
 
-### Phase 1
+## Persistence
 
-* [ ] Lexer
-* [ ] Parser
-* [ ] AST
-* [ ] In-memory storage
-* [ ] Basic `SELECT`
+KansoDB persists the logical database state:
 
-### Phase 2
+* storage format version
+* table names
+* column names, types, and nullability
+* primary keys, unique constraints, and foreign keys
+* rows
 
-* [ ] `WHERE`
-* [ ] `ORDER BY`
-* [ ] `LIMIT`
-* [ ] `INSERT`
-* [ ] `CREATE TABLE`
+It does not persist parser objects, executors, file handles, transaction snapshots, or execution history.
 
-### Phase 3
+The storage format is versioned JSON:
 
-* [ ] Aggregations
-* [ ] `GROUP BY`
-* [ ] `INNER JOIN`
-* [ ] Indexes
+```json
+{
+  "format": "kansodb",
+  "version": 1,
+  "savedAt": "2026-07-22T00:00:00.000Z",
+  "database": {
+    "tables": []
+  }
+}
+```
 
-### Phase 4
+## Saving
 
-* [ ] Query planner
-* [ ] `EXPLAIN`
-* [ ] File persistence
-* [ ] Interactive playground
-
----
-
-## Example
+Use SQL:
 
 ```sql
-SELECT name, salary
-FROM employees
-WHERE department = 'Engineering'
-ORDER BY salary DESC
-LIMIT 5;
+SAVE;
 ```
 
-Execution pipeline:
+Or the API:
+
+```ts
+await database.save();
+```
+
+`SAVE` is rejected while an explicit transaction is active, because persistence represents committed database state only.
+
+## Auto-Save
+
+```ts
+type AutoSaveMode = "off" | "on-commit" | "after-mutation";
+```
+
+* `off`: only explicit `SAVE` or `database.save()` writes to disk.
+* `on-commit`: saves after successful standalone mutations, explicit `COMMIT`, and successful atomic scripts.
+* `after-mutation`: saves after successful standalone mutations and once after transaction commit.
+
+If auto-save fails after an in-memory commit, the memory state remains committed and the database is marked dirty so callers can retry `SAVE`.
+
+## Transactions
+
+```sql
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;
+```
+
+Rollback restores the full in-memory database snapshot captured at `BEGIN`, including schemas, rows, and constraints. Nested transactions and savepoints are intentionally not supported.
+
+## Recovery
+
+Saves use:
 
 ```text
-SQL Query
-    │
-    ▼
-Lexer
-    │
-    ▼
-Parser
-    │
-    ▼
-Abstract Syntax Tree
-    │
-    ▼
-Query Planner
-    │
-    ▼
-Execution Engine
-    │
-    ▼
-Result Set
+database.json.tmp
+database.json.bak
 ```
 
----
+On startup, KansoDB validates candidates before promotion. It can recover from interrupted saves using a valid temporary or backup file. Corrupt files are not silently replaced with an empty database.
 
-## Architecture
+## Limitations
 
+KansoDB currently assumes a single process and a single writer per database file. It does not implement locking, write-ahead logging, crash recovery beyond safe replacement, migrations, indexes, query planning, server APIs, authentication, encryption, replication, a CLI, or a frontend.
+
+## Development
+
+```bash
+npm test
+npm run typecheck
+npm run build
 ```
-src/
-├── lexer/
-├── parser/
-├── planner/
-├── execution/
-├── storage/
-├── cli/
-├── types/
-└── tests/
-```
-
-Each module has a single responsibility, making the engine easy to understand, extend, and test.
-
----
-
-## Learning Goals
-
-KansoDB is designed to deepen understanding of:
-
-* Programming language parsing
-* Database internals
-* Algorithms and data structures
-* Query optimisation
-* Software architecture
-* Type-safe API design
-
----
 
 ## License
 

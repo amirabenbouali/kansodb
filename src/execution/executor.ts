@@ -1,4 +1,5 @@
 import { ExecutionError, type ExecutionErrorOptions } from "../errors/execution-error.js";
+import { PersistenceError } from "../errors/persistence-error.js";
 import { StorageError } from "../errors/storage-error.js";
 import { Lexer } from "../lexer/lexer.js";
 import { Parser } from "../parser/parser.js";
@@ -10,6 +11,7 @@ import type {
   CommitTransactionStatement,
   InsertStatement,
   RollbackTransactionStatement,
+  SaveDatabaseStatement,
   SelectStatement,
   Statement,
   TableConstraint,
@@ -23,7 +25,7 @@ import type { Table } from "../storage/table.js";
 import { evaluateExpression, evaluateScalar, tableContext } from "./expression-evaluator.js";
 import { JoinExecutor } from "./join-executor.js";
 import type { QueryResult } from "./query-result.js";
-import type { CreateTableResult, DeleteResult, InsertResult, StatementResult, TransactionResult, UpdateResult } from "./statement-result.js";
+import type { CreateTableResult, DeleteResult, InsertResult, PersistenceResult, StatementResult, TransactionResult, UpdateResult } from "./statement-result.js";
 import { TransactionExecutor } from "./transaction-executor.js";
 
 interface ResolvedColumn {
@@ -44,6 +46,7 @@ export class Executor {
   public execute(statement: UpdateStatement): UpdateResult;
   public execute(statement: DeleteStatement): DeleteResult;
   public execute(statement: BeginTransactionStatement | CommitTransactionStatement | RollbackTransactionStatement): TransactionResult;
+  public execute(statement: SaveDatabaseStatement): PersistenceResult;
   public execute(statement: Statement): StatementResult;
   public execute(statement: Statement): StatementResult {
     switch (statement.type) {
@@ -61,13 +64,100 @@ export class Executor {
       case "commit_transaction":
       case "rollback_transaction":
         return new TransactionExecutor().execute(statement, this.database);
+      case "save_database":
+        {
+          const options = {
+            code: "PERSISTENCE_PATH_NOT_CONFIGURED" as const,
+            message: "SAVE requires asynchronous execution through executeSqlAsync().",
+            statementType: "save_database" as const,
+            ...(this.database.persistencePath === null ? {} : { path: this.database.persistencePath })
+          };
+
+          throw new PersistenceError(options);
+        }
     }
 
     return this.assertNever(statement);
   }
 
+  public async executeAsync(statement: Statement): Promise<StatementResult> {
+    if (statement.type === "save_database") {
+      const result = await this.database.save();
+      return {
+        type: "persistence",
+        action: "SAVE",
+        path: result.path,
+        bytesWritten: result.bytesWritten
+      };
+    }
+
+    const wasActive = this.database.isTransactionActive;
+    const result = this.execute(statement);
+    await this.maybeAutoSave(statement, result, wasActive);
+    return result;
+  }
+
   private executeSelect(statement: SelectStatement): QueryResult {
     return new JoinExecutor().execute(statement, this.database);
+  }
+
+  private async maybeAutoSave(statement: Statement, result: StatementResult, wasActiveBeforeStatement: boolean): Promise<void> {
+    if (!this.database.isPersistent || this.database.autoSave === "off") {
+      return;
+    }
+
+    const shouldSave = this.shouldAutoSave(statement, result, wasActiveBeforeStatement);
+    if (!shouldSave) {
+      return;
+    }
+
+    try {
+      await this.database.saveIfConfigured();
+    } catch (error) {
+      if (error instanceof PersistenceError) {
+        throw new PersistenceError({
+          code: "AUTO_SAVE_FAILED",
+          message: error.message,
+          statementType: statement.type,
+          databaseStateCommitted: true,
+          persistenceSucceeded: false,
+          ...((error.path ?? this.database.persistencePath) === null ? {} : { path: error.path ?? this.database.persistencePath! })
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  private shouldAutoSave(statement: Statement, result: StatementResult, wasActiveBeforeStatement: boolean): boolean {
+    if (this.database.isTransactionActive) {
+      return false;
+    }
+
+    if (statement.type === "commit_transaction" && result.type === "transaction" && result.state === "IDLE") {
+      return this.database.autoSave === "on-commit" || this.database.autoSave === "after-mutation";
+    }
+
+    if (wasActiveBeforeStatement) {
+      return false;
+    }
+
+    if (this.database.autoSave !== "on-commit" && this.database.autoSave !== "after-mutation") {
+      return false;
+    }
+
+    switch (result.type) {
+      case "create_table":
+      case "insert":
+        return true;
+      case "update":
+      case "delete":
+        return result.affectedRows > 0;
+      case "query":
+      case "transaction":
+      case "persistence":
+        return false;
+    }
   }
 
   private executeCreateTable(statement: CreateTableStatement): CreateTableResult {
@@ -490,4 +580,10 @@ export function executeSql(database: Database, sql: string): StatementResult {
   const tokens = new Lexer(sql).tokenize();
   const statement = new Parser(tokens).parse();
   return new Executor(database).execute(statement);
+}
+
+export async function executeSqlAsync(database: Database, sql: string): Promise<StatementResult> {
+  const tokens = new Lexer(sql).tokenize();
+  const statement = new Parser(tokens).parse();
+  return new Executor(database).executeAsync(statement);
 }

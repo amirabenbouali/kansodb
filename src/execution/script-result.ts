@@ -49,6 +49,11 @@ export interface ScriptExecutionErrorRecord {
   attemptedAction?: TransactionAction;
   atomic?: boolean;
   statementType?: Statement["type"];
+  path?: string;
+  foundVersion?: number;
+  supportedVersions?: readonly number[];
+  databaseStateCommitted?: boolean;
+  persistenceSucceeded?: boolean;
   position?: {
     start: number;
     end: number;
@@ -136,6 +141,8 @@ function cloneStatementResult(result: StatementResult): StatementResult {
       return { ...result };
     case "transaction":
       return { ...result };
+    case "persistence":
+      return { ...result };
   }
 }
 
@@ -195,6 +202,26 @@ function cloneErrorRecord(error: ScriptExecutionErrorRecord): ScriptExecutionErr
 
   if (error.statementType !== undefined) {
     clone.statementType = error.statementType;
+  }
+
+  if (error.path !== undefined) {
+    clone.path = error.path;
+  }
+
+  if (error.foundVersion !== undefined) {
+    clone.foundVersion = error.foundVersion;
+  }
+
+  if (error.supportedVersions !== undefined) {
+    clone.supportedVersions = [...error.supportedVersions];
+  }
+
+  if (error.databaseStateCommitted !== undefined) {
+    clone.databaseStateCommitted = error.databaseStateCommitted;
+  }
+
+  if (error.persistenceSucceeded !== undefined) {
+    clone.persistenceSucceeded = error.persistenceSucceeded;
   }
 
   return clone;

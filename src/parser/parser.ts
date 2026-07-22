@@ -21,6 +21,7 @@ import type {
   OrderByExpression,
   OrderByItem,
   RollbackTransactionStatement,
+  SaveDatabaseStatement,
   SelectColumn,
   SelectItem,
   SelectExpressionItem,
@@ -77,6 +78,10 @@ export class Parser {
       return this.parseRollbackTransactionStatement();
     }
 
+    if (this.check(TokenType.Save)) {
+      return this.parseSaveDatabaseStatement();
+    }
+
     throw new ParserError("Expected a supported SQL statement", this.peek(), [
       TokenType.Select,
       TokenType.Create,
@@ -85,7 +90,8 @@ export class Parser {
       TokenType.Delete,
       TokenType.Begin,
       TokenType.Commit,
-      TokenType.Rollback
+      TokenType.Rollback,
+      TokenType.Save
     ]);
   }
 
@@ -287,6 +293,12 @@ export class Parser {
     this.consume(TokenType.Rollback, "Expected ROLLBACK to revert a transaction");
     this.finishStatement("Unexpected token after complete ROLLBACK statement");
     return { type: "rollback_transaction" };
+  }
+
+  public parseSaveDatabaseStatement(): SaveDatabaseStatement {
+    this.consume(TokenType.Save, "Expected SAVE to persist the database");
+    this.finishStatement("Unexpected token after complete SAVE statement");
+    return { type: "save_database" };
   }
 
   private parseSelectList(): SelectItem[] {

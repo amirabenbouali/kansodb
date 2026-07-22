@@ -40,7 +40,8 @@ export class ScriptParser {
           TokenType.Delete,
           TokenType.Begin,
           TokenType.Commit,
-          TokenType.Rollback
+          TokenType.Rollback,
+          TokenType.Save
         ]);
       }
 
@@ -61,7 +62,8 @@ export class ScriptParser {
           TokenType.Delete,
           TokenType.Begin,
           TokenType.Commit,
-          TokenType.Rollback
+          TokenType.Rollback,
+          TokenType.Save
         ]);
       }
     }

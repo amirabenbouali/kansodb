@@ -1,16 +1,76 @@
 import { StorageError } from "../errors/storage-error.js";
+import { PersistenceError } from "../errors/persistence-error.js";
+import type { ScriptExecutionOptions, ScriptExecutionResult } from "../execution/script-result.js";
+import type { StatementResult } from "../execution/statement-result.js";
+import { DatabaseCodec } from "../persistence/database-codec.js";
+import type { FileAdapter } from "../persistence/file-adapter.js";
+import { NodeFileAdapter } from "../persistence/node-file-adapter.js";
+import { PersistenceManager, type SaveResult } from "../persistence/persistence-manager.js";
 import type { ColumnDefinition } from "./column.js";
 import type { DatabaseValue, InputRow, StoredRow } from "./row.js";
 import { Table } from "./table.js";
 import { cloneDatabaseSnapshot, freezeDatabaseSnapshot, type DatabaseSnapshot, type TransactionState } from "./transaction.js";
 import { TransactionManager } from "./transaction-manager.js";
 
+export type AutoSaveMode = "off" | "on-commit" | "after-mutation";
+
+export interface DatabaseOpenOptions {
+  path?: string;
+  fileAdapter?: FileAdapter;
+  autoSave?: AutoSaveMode;
+}
+
+export interface PersistenceState {
+  path: string | null;
+  lastSavedAt: string | null;
+  lastSavedBytes: number | null;
+  dirty: boolean;
+}
+
 export class Database {
   private readonly tables = new Map<string, Table>();
   public readonly transactionManager: TransactionManager;
+  private persistenceManager: PersistenceManager | undefined;
+  private autoSaveMode: AutoSaveMode = "off";
+  private persistenceMetadata: PersistenceState = {
+    path: null,
+    lastSavedAt: null,
+    lastSavedBytes: null,
+    dirty: false
+  };
 
   public constructor() {
     this.transactionManager = new TransactionManager(this);
+  }
+
+  public static async open(options: DatabaseOpenOptions = {}): Promise<Database> {
+    const database = new Database();
+    database.autoSaveMode = options.autoSave ?? "off";
+
+    if (options.path === undefined) {
+      return database;
+    }
+
+    const persistenceManager = new PersistenceManager(
+      options.path,
+      options.fileAdapter ?? new NodeFileAdapter(),
+      new DatabaseCodec()
+    );
+    database.persistenceManager = persistenceManager;
+    database.persistenceMetadata = {
+      path: options.path,
+      lastSavedAt: null,
+      lastSavedBytes: null,
+      dirty: false
+    };
+
+    const snapshot = await persistenceManager.load();
+    if (snapshot !== null) {
+      database.restoreSnapshot(snapshot);
+      database.markClean(null);
+    }
+
+    return database;
   }
 
   public createTable(name: string, columns: readonly ColumnDefinition[]): Table {
@@ -28,6 +88,7 @@ export class Database {
     const table = new Table(name, this.canonicalizeReferences(name, columns));
     this.validateCreateTableConstraints(table);
     this.tables.set(key, table);
+    this.markDirty();
     return table;
   }
 
@@ -140,6 +201,62 @@ export class Database {
     return this.transactionManager.isActive;
   }
 
+  public get persistencePath(): string | null {
+    return this.persistenceMetadata.path;
+  }
+
+  public get isPersistent(): boolean {
+    return this.persistenceManager !== undefined;
+  }
+
+  public get autoSave(): AutoSaveMode {
+    return this.autoSaveMode;
+  }
+
+  public get persistenceState(): PersistenceState {
+    return { ...this.persistenceMetadata };
+  }
+
+  public async save(): Promise<SaveResult> {
+    if (this.persistenceManager === undefined || this.persistenceMetadata.path === null) {
+      throw new PersistenceError({
+        code: "PERSISTENCE_PATH_NOT_CONFIGURED",
+        message: "No persistence path is configured for this database."
+      });
+    }
+
+    if (this.isTransactionActive) {
+      throw new PersistenceError({
+        code: "SAVE_DURING_ACTIVE_TRANSACTION",
+        message: "Cannot save while a transaction is active.",
+        path: this.persistenceMetadata.path,
+        statementType: "save_database"
+      });
+    }
+
+    const result = await this.persistenceManager.save(this.createSnapshot());
+    this.markClean(result.bytesWritten);
+    return result;
+  }
+
+  public async saveIfConfigured(): Promise<SaveResult | null> {
+    if (this.persistenceManager === undefined) {
+      return null;
+    }
+
+    return this.save();
+  }
+
+  public async executeSql(sql: string): Promise<StatementResult> {
+    const { executeSqlAsync } = await import("../execution/executor.js");
+    return executeSqlAsync(this, sql);
+  }
+
+  public async executeSqlScript(sql: string, options?: ScriptExecutionOptions): Promise<ScriptExecutionResult> {
+    const { executeSqlScriptAsync } = await import("../execution/script-executor.js");
+    return executeSqlScriptAsync(this, sql, options);
+  }
+
   public createSnapshot(): DatabaseSnapshot {
     return freezeDatabaseSnapshot({
       tables: Array.from(this.tables.values(), (table) => ({
@@ -202,6 +319,8 @@ export class Database {
         tableName: name
       });
     }
+
+    this.markDirty();
   }
 
   public insertInto(tableName: string, row: InputRow): StoredRow {
@@ -211,6 +330,7 @@ export class Database {
 
     this.validateTableState(table, proposedRows);
     table.replaceRows(proposedRows);
+    this.markDirty();
     return { ...storedRow };
   }
 
@@ -235,6 +355,9 @@ export class Database {
 
     this.validateTableState(table, proposedRows);
     table.replaceRows(proposedRows);
+    if (affectedRows > 0) {
+      this.markDirty();
+    }
     return affectedRows;
   }
 
@@ -254,6 +377,9 @@ export class Database {
 
     this.validateTableState(table, remainingRows);
     table.replaceRows(remainingRows);
+    if (affectedRows > 0) {
+      this.markDirty();
+    }
     return affectedRows;
   }
 
@@ -458,5 +584,36 @@ export class Database {
 
   private normalizeTableName(name: string): string {
     return name.toLowerCase();
+  }
+
+  public getPersistenceDirtySnapshot(): boolean {
+    return this.persistenceMetadata.dirty;
+  }
+
+  public restorePersistenceDirtySnapshot(dirty: boolean): void {
+    this.persistenceMetadata = {
+      ...this.persistenceMetadata,
+      dirty
+    };
+  }
+
+  private markDirty(): void {
+    if (this.persistenceManager === undefined) {
+      return;
+    }
+
+    this.persistenceMetadata = {
+      ...this.persistenceMetadata,
+      dirty: true
+    };
+  }
+
+  private markClean(bytesWritten: number | null): void {
+    this.persistenceMetadata = {
+      ...this.persistenceMetadata,
+      lastSavedAt: new Date().toISOString(),
+      lastSavedBytes: bytesWritten,
+      dirty: false
+    };
   }
 }

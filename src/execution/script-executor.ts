@@ -4,6 +4,7 @@ import { ParserError } from "../errors/parser-error.js";
 import { StorageError } from "../errors/storage-error.js";
 import { ExecutionError } from "../errors/execution-error.js";
 import { TransactionError } from "../errors/transaction-error.js";
+import { PersistenceError } from "../errors/persistence-error.js";
 import { Lexer } from "../lexer/lexer.js";
 import { ScriptParser, type ParsedScriptStatement } from "../parser/script-parser.js";
 import type { Database } from "../storage/database.js";
@@ -66,13 +67,13 @@ export class ScriptExecutor {
     }
 
     if (atomic) {
-      const transactionStatement = parsedStatements.find((entry) => this.isTransactionStatement(entry.statement.type));
-      if (transactionStatement !== undefined) {
+      const disallowedStatement = parsedStatements.find((entry) => this.isAtomicScriptDisallowedStatement(entry.statement.type));
+      if (disallowedStatement !== undefined) {
         if (atomicSnapshot !== undefined) {
           this.database.transactionManager.restoreInternalSnapshot(atomicSnapshot);
         }
 
-        const result = this.buildTransactionControlFailureResult(parsedStatements, transactionStatement, startedAt, stopOnError);
+        const result = this.buildAtomicControlFailureResult(parsedStatements, disallowedStatement, startedAt, stopOnError);
         this.history?.add(result);
         return cloneScriptExecutionResult(result);
       }
@@ -131,6 +132,119 @@ export class ScriptExecutor {
         rolledBack = true;
       } else {
         committed = true;
+      }
+    }
+
+    const result = this.buildResult(records, parsedStatements.length, !stopped, startedAt, atomic, committed, rolledBack);
+    this.history?.add(result);
+    return cloneScriptExecutionResult(result);
+  }
+
+  public async executeAsync(sql: string, options: ScriptExecutionOptions = {}): Promise<ScriptExecutionResult> {
+    const stopOnError = options.stopOnError ?? true;
+    const atomic = options.atomic ?? false;
+    const startedAt = performance.now();
+
+    if (atomic && this.database.isTransactionActive) {
+      const result = this.buildSingleFailureResult(
+        new TransactionError({
+          code: "ATOMIC_SCRIPT_IN_ACTIVE_TRANSACTION",
+          message: "Cannot execute an atomic script while an explicit transaction is active.",
+          currentState: this.database.transactionState,
+          atomic: true
+        }),
+        startedAt,
+        atomic,
+        false,
+        true
+      );
+      this.history?.add(result);
+      return cloneScriptExecutionResult(result);
+    }
+
+    const atomicSnapshot = atomic ? this.database.transactionManager.createInternalSnapshot() : undefined;
+
+    let parsedStatements: ParsedScriptStatement[];
+    try {
+      const tokens = new Lexer(sql).tokenize();
+      parsedStatements = new ScriptParser(tokens, sql).parseWithMetadata();
+    } catch (error) {
+      if (atomicSnapshot !== undefined) {
+        this.database.transactionManager.restoreInternalSnapshot(atomicSnapshot);
+      }
+
+      const result = this.buildParseFailureResult(error, startedAt, atomic, false, atomic);
+      this.history?.add(result);
+      return cloneScriptExecutionResult(result);
+    }
+
+    if (atomic) {
+      const disallowedStatement = parsedStatements.find((entry) => this.isAtomicScriptDisallowedStatement(entry.statement.type));
+      if (disallowedStatement !== undefined) {
+        if (atomicSnapshot !== undefined) {
+          this.database.transactionManager.restoreInternalSnapshot(atomicSnapshot);
+        }
+
+        const result = this.buildAtomicControlFailureResult(parsedStatements, disallowedStatement, startedAt, stopOnError);
+        this.history?.add(result);
+        return cloneScriptExecutionResult(result);
+      }
+    }
+
+    const records: StatementExecutionRecord[] = [];
+    const executor = new Executor(this.database);
+    let stopped = false;
+
+    for (const [index, entry] of parsedStatements.entries()) {
+      if (stopped) {
+        records.push(this.createSkippedRecord(index, entry));
+        continue;
+      }
+
+      const recordStartedAt = performance.now();
+      const wallStartedAt = new Date().toISOString();
+
+      try {
+        const result = atomic ? executor.execute(entry.statement) : await executor.executeAsync(entry.statement);
+        records.push({
+          index,
+          statementType: entry.statement.type,
+          ...(entry.sql === undefined ? {} : { sql: entry.sql }),
+          status: "success",
+          result,
+          durationMs: this.durationSince(recordStartedAt),
+          startedAt: wallStartedAt,
+          finishedAt: new Date().toISOString()
+        });
+      } catch (error) {
+        records.push({
+          index,
+          statementType: entry.statement.type,
+          ...(entry.sql === undefined ? {} : { sql: entry.sql }),
+          status: "error",
+          error: this.normalizeError(error),
+          durationMs: this.durationSince(recordStartedAt),
+          startedAt: wallStartedAt,
+          finishedAt: new Date().toISOString()
+        });
+
+        if (stopOnError) {
+          stopped = true;
+        }
+      }
+    }
+
+    const failed = records.some((record) => record.status === "error");
+    let committed = false;
+    let rolledBack = false;
+
+    if (atomic && atomicSnapshot !== undefined) {
+      if (failed) {
+        this.database.transactionManager.restoreInternalSnapshot(atomicSnapshot);
+        rolledBack = true;
+      } else {
+        committed = true;
+        await this.autoSaveAfterAtomicCommit(records);
       }
     }
 
@@ -209,9 +323,9 @@ export class ScriptExecutor {
     };
   }
 
-  private buildTransactionControlFailureResult(
+  private buildAtomicControlFailureResult(
     parsedStatements: ParsedScriptStatement[],
-    transactionStatement: ParsedScriptStatement,
+    blockedStatement: ParsedScriptStatement,
     scriptStartedAt: number,
     stopOnError: boolean
   ): ScriptExecutionResult {
@@ -226,19 +340,28 @@ export class ScriptExecutor {
         return;
       }
 
-      if (entry === transactionStatement || this.isTransactionStatement(entry.statement.type)) {
-        records.push({
-          index,
-          statementType: entry.statement.type,
-          ...(entry.sql === undefined ? {} : { sql: entry.sql }),
-          status: "error",
-          error: this.normalizeError(new TransactionError({
+      if (entry === blockedStatement || this.isAtomicScriptDisallowedStatement(entry.statement.type)) {
+        const error = entry.statement.type === "save_database"
+          ? new PersistenceError({
+            code: "SAVE_DURING_ACTIVE_TRANSACTION",
+            message: "SAVE is not allowed inside an atomic script.",
+            statementType: entry.statement.type,
+            ...(this.database.persistencePath === null ? {} : { path: this.database.persistencePath })
+          })
+          : new TransactionError({
             code: "TRANSACTION_CONTROL_NOT_ALLOWED",
             message: "Explicit transaction statements are not allowed in an atomic script.",
             currentState: this.database.transactionState,
             atomic: true,
             statementType: entry.statement.type
-          })),
+          });
+
+        records.push({
+          index,
+          statementType: entry.statement.type,
+          ...(entry.sql === undefined ? {} : { sql: entry.sql }),
+          status: "error",
+          error: this.normalizeError(error),
           durationMs: 0,
           startedAt: now,
           finishedAt: now
@@ -254,6 +377,34 @@ export class ScriptExecutor {
     });
 
     return this.buildResult(records, parsedStatements.length, false, scriptStartedAt, true, false, true);
+  }
+
+  private async autoSaveAfterAtomicCommit(records: StatementExecutionRecord[]): Promise<void> {
+    if (!this.database.isPersistent || this.database.autoSave === "off") {
+      return;
+    }
+
+    try {
+      await this.database.saveIfConfigured();
+    } catch (error) {
+      records.push({
+        index: records.length,
+        statementType: null,
+        status: "error",
+        error: this.normalizeError(error instanceof PersistenceError
+          ? new PersistenceError({
+            code: "AUTO_SAVE_FAILED",
+            message: error.message,
+            databaseStateCommitted: true,
+            persistenceSucceeded: false,
+            ...((error.path ?? this.database.persistencePath) === null ? {} : { path: error.path ?? this.database.persistencePath! })
+          })
+          : error),
+        durationMs: 0,
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString()
+      });
+    }
   }
 
   private createSkippedRecord(index: number, entry: ParsedScriptStatement): StatementExecutionRecord {
@@ -303,7 +454,7 @@ export class ScriptExecutor {
       return this.knownPositionError(error, overrideCode);
     }
 
-    if (error instanceof ExecutionError || error instanceof StorageError || error instanceof ScriptError || error instanceof TransactionError) {
+    if (error instanceof ExecutionError || error instanceof StorageError || error instanceof ScriptError || error instanceof TransactionError || error instanceof PersistenceError) {
       return this.knownCodeError(error, overrideCode);
     }
 
@@ -340,7 +491,7 @@ export class ScriptExecutor {
     return record;
   }
 
-  private knownCodeError(error: ExecutionError | StorageError | ScriptError | TransactionError, overrideCode?: ScriptErrorCode): ScriptExecutionErrorRecord {
+  private knownCodeError(error: ExecutionError | StorageError | ScriptError | TransactionError | PersistenceError, overrideCode?: ScriptErrorCode): ScriptExecutionErrorRecord {
     const record: ScriptExecutionErrorRecord = {
       name: error.name,
       code: overrideCode ?? error.code,
@@ -398,7 +549,31 @@ export class ScriptExecutor {
       record.statementType = error.statementType;
     }
 
+    if ("path" in error && typeof error.path === "string") {
+      record.path = error.path;
+    }
+
+    if ("foundVersion" in error && typeof error.foundVersion === "number") {
+      record.foundVersion = error.foundVersion;
+    }
+
+    if ("supportedVersions" in error && Array.isArray(error.supportedVersions)) {
+      record.supportedVersions = [...error.supportedVersions];
+    }
+
+    if ("databaseStateCommitted" in error && typeof error.databaseStateCommitted === "boolean") {
+      record.databaseStateCommitted = error.databaseStateCommitted;
+    }
+
+    if ("persistenceSucceeded" in error && typeof error.persistenceSucceeded === "boolean") {
+      record.persistenceSucceeded = error.persistenceSucceeded;
+    }
+
     return record;
+  }
+
+  private isAtomicScriptDisallowedStatement(type: ParsedScriptStatement["statement"]["type"]): boolean {
+    return this.isTransactionStatement(type) || type === "save_database";
   }
 
   private isTransactionStatement(type: ParsedScriptStatement["statement"]["type"]): boolean {
@@ -424,4 +599,8 @@ export class ScriptExecutor {
 
 export function executeSqlScript(database: Database, sql: string, options?: ScriptExecutionOptions): ScriptExecutionResult {
   return new ScriptExecutor(database).execute(sql, options);
+}
+
+export async function executeSqlScriptAsync(database: Database, sql: string, options?: ScriptExecutionOptions): Promise<ScriptExecutionResult> {
+  return new ScriptExecutor(database).executeAsync(sql, options);
 }

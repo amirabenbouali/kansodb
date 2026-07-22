@@ -115,6 +115,28 @@ describe("lexer", () => {
     ]);
   });
 
+  it("tokenizes SAVE and similar identifiers", () => {
+    const tokens = withoutEof(tokenize("SAVE save SaVe; SELECT saved_at, saver FROM logs"));
+
+    expect(tokens.map((token) => token.type)).toEqual([
+      TokenType.Save,
+      TokenType.Save,
+      TokenType.Save,
+      TokenType.Semicolon,
+      TokenType.Select,
+      TokenType.Identifier,
+      TokenType.Comma,
+      TokenType.Identifier,
+      TokenType.From,
+      TokenType.Identifier
+    ]);
+    expect(tokens.filter((token) => token.type === TokenType.Identifier).map((token) => token.lexeme)).toEqual([
+      "saved_at",
+      "saver",
+      "logs"
+    ]);
+  });
+
   it("tokenizes identifiers containing underscores and numbers", () => {
     const tokens = withoutEof(tokenize("SELECT employee_1, _dept2 FROM table_2026"));
 

@@ -10,7 +10,7 @@ The project is intentionally compact. It is built to be readable, inspectable, a
 
 ![KansoDB workbench](docs/screenshots/workbench.png)
 
-![KansoDB command palette](docs/screenshots/command-palette.png)
+![KansoDB token inspector](docs/screenshots/token-inspector.png)
 
 ## Product Concept
 

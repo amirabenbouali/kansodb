@@ -1,9 +1,11 @@
 import type { Statement } from "../parser/ast.js";
 import type { DatabaseValue } from "../storage/row.js";
+import type { TransactionAction, TransactionState } from "../storage/transaction.js";
 import type { StatementResult } from "./statement-result.js";
 
 export interface ScriptExecutionOptions {
   stopOnError?: boolean;
+  atomic?: boolean;
 }
 
 export interface ScriptExecutionResult {
@@ -12,7 +14,11 @@ export interface ScriptExecutionResult {
   statementCount: number;
   succeeded: number;
   failed: number;
+  skipped: number;
   completed: boolean;
+  atomic: boolean;
+  committed: boolean;
+  rolledBack: boolean;
   durationMs: number;
 }
 
@@ -39,6 +45,10 @@ export interface ScriptExecutionErrorRecord {
   referencingTableName?: string;
   referencingColumnName?: string;
   value?: DatabaseValue | undefined;
+  currentState?: TransactionState;
+  attemptedAction?: TransactionAction;
+  atomic?: boolean;
+  statementType?: Statement["type"];
   position?: {
     start: number;
     end: number;
@@ -72,7 +82,11 @@ export function cloneScriptExecutionResult(result: ScriptExecutionResult): Scrip
     statementCount: result.statementCount,
     succeeded: result.succeeded,
     failed: result.failed,
+    skipped: result.skipped,
     completed: result.completed,
+    atomic: result.atomic,
+    committed: result.committed,
+    rolledBack: result.rolledBack,
     durationMs: result.durationMs,
     statements: result.statements.map(cloneStatementExecutionRecord)
   };
@@ -120,6 +134,8 @@ function cloneStatementResult(result: StatementResult): StatementResult {
       return { ...result };
     case "delete":
       return { ...result };
+    case "transaction":
+      return { ...result };
   }
 }
 
@@ -163,6 +179,22 @@ function cloneErrorRecord(error: ScriptExecutionErrorRecord): ScriptExecutionErr
 
   if ("value" in error) {
     clone.value = error.value;
+  }
+
+  if (error.currentState !== undefined) {
+    clone.currentState = error.currentState;
+  }
+
+  if (error.attemptedAction !== undefined) {
+    clone.attemptedAction = error.attemptedAction;
+  }
+
+  if (error.atomic !== undefined) {
+    clone.atomic = error.atomic;
+  }
+
+  if (error.statementType !== undefined) {
+    clone.statementType = error.statementType;
   }
 
   return clone;

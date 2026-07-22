@@ -6,6 +6,7 @@ export { Parser, parseSelectStatement } from "./parser/parser.js";
 export { ParserError } from "./errors/parser-error.js";
 export { ScriptError, type ScriptErrorCode, type ScriptErrorOptions } from "./errors/script-error.js";
 export { StorageError, type StorageErrorCode, type StorageErrorOptions } from "./errors/storage-error.js";
+export { TransactionError, type TransactionErrorCode, type TransactionErrorOptions } from "./errors/transaction-error.js";
 export { Executor, executeSql } from "./execution/executor.js";
 export { AggregateExecutor } from "./execution/aggregate-executor.js";
 export { JoinExecutor } from "./execution/join-executor.js";
@@ -37,7 +38,8 @@ export { passesPredicate, sqlAnd, sqlNot, sqlOr, truthValueFromBoolean, type Tru
 export { type QueryResult } from "./execution/query-result.js";
 export { ExecutionHistory, type ScriptExecutionErrorRecord, type ScriptExecutionOptions, type ScriptExecutionResult, type StatementExecutionRecord } from "./execution/script-result.js";
 export { ScriptExecutor, executeSqlScript } from "./execution/script-executor.js";
-export { type CreateTableResult, type DeleteResult, type InsertResult, type StatementResult, type UpdateResult } from "./execution/statement-result.js";
+export { type CreateTableResult, type DeleteResult, type InsertResult, type StatementResult, type TransactionResult, type UpdateResult } from "./execution/statement-result.js";
+export { TransactionExecutor, type TransactionStatement } from "./execution/transaction-executor.js";
 export { ScriptParser, parseScript, type ParsedScriptStatement } from "./parser/script-parser.js";
 export { type ColumnDefinition, type StoredColumnDefinition } from "./storage/column.js";
 export { type PrimaryKeyMetadata, type UniqueConstraintMetadata } from "./storage/constraint.js";
@@ -46,8 +48,20 @@ export { DataType } from "./storage/data-type.js";
 export { type ForeignKeyMetadata } from "./storage/foreign-key.js";
 export { type DatabaseValue, type InputRow, type StoredRow } from "./storage/row.js";
 export { Table } from "./storage/table.js";
+export {
+  cloneDatabaseSnapshot,
+  freezeDatabaseSnapshot,
+  type DatabaseSnapshot,
+  type TableSnapshot,
+  type TransactionAction,
+  type TransactionSnapshot,
+  type TransactionState
+} from "./storage/transaction.js";
+export { TransactionManager } from "./storage/transaction-manager.js";
 export type {
+  BeginTransactionStatement,
   ColumnReference,
+  CommitTransactionStatement,
   ComparisonExpression,
   ComparisonOperator,
   ArithmeticExpression,
@@ -76,6 +90,7 @@ export type {
   OrderDirection,
   OrdinalReference,
   ResultAliasReference,
+  RollbackTransactionStatement,
   SelectColumn,
   SelectExpressionItem,
   SelectItem,

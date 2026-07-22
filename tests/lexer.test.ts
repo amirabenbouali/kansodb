@@ -82,6 +82,39 @@ describe("lexer", () => {
     ]);
   });
 
+  it("tokenizes transaction keywords", () => {
+    expect(withoutEof(tokenize("BEGIN BEGIN TRANSACTION COMMIT ROLLBACK")).map((token) => token.type)).toEqual([
+      TokenType.Begin,
+      TokenType.Begin,
+      TokenType.Transaction,
+      TokenType.Commit,
+      TokenType.Rollback
+    ]);
+  });
+
+  it("tokenizes lowercase and mixed-case transaction keywords", () => {
+    expect(withoutEof(tokenize("begin Begin transaction Commit rollback")).map((token) => token.type)).toEqual([
+      TokenType.Begin,
+      TokenType.Begin,
+      TokenType.Transaction,
+      TokenType.Commit,
+      TokenType.Rollback
+    ]);
+  });
+
+  it("tokenizes transaction keywords inside scripts and preserves similar identifiers", () => {
+    const tokens = withoutEof(tokenize("BEGIN; INSERT INTO logs VALUES ('x'); COMMIT; SELECT begin_at, rollback_reason FROM logs"));
+
+    expect(tokens.map((token) => token.type)).toContain(TokenType.Begin);
+    expect(tokens.map((token) => token.type)).toContain(TokenType.Commit);
+    expect(tokens.filter((token) => token.type === TokenType.Identifier).map((token) => token.lexeme)).toEqual([
+      "logs",
+      "begin_at",
+      "rollback_reason",
+      "logs"
+    ]);
+  });
+
   it("tokenizes identifiers containing underscores and numbers", () => {
     const tokens = withoutEof(tokenize("SELECT employee_1, _dept2 FROM table_2026"));
 

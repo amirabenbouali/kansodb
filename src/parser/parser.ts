@@ -2,7 +2,9 @@ import type {
   AggregateExpression,
   AggregateFunctionName,
   ArithmeticOperator,
+  BeginTransactionStatement,
   ColumnReference,
+  CommitTransactionStatement,
   ComparisonOperator,
   CreateColumnDataType,
   CreateColumnDefinition,
@@ -18,6 +20,7 @@ import type {
   OrderByClause,
   OrderByExpression,
   OrderByItem,
+  RollbackTransactionStatement,
   SelectColumn,
   SelectItem,
   SelectExpressionItem,
@@ -62,12 +65,27 @@ export class Parser {
       return this.parseDeleteStatement();
     }
 
+    if (this.check(TokenType.Begin)) {
+      return this.parseBeginTransactionStatement();
+    }
+
+    if (this.check(TokenType.Commit)) {
+      return this.parseCommitTransactionStatement();
+    }
+
+    if (this.check(TokenType.Rollback)) {
+      return this.parseRollbackTransactionStatement();
+    }
+
     throw new ParserError("Expected a supported SQL statement", this.peek(), [
       TokenType.Select,
       TokenType.Create,
       TokenType.Insert,
       TokenType.Update,
-      TokenType.Delete
+      TokenType.Delete,
+      TokenType.Begin,
+      TokenType.Commit,
+      TokenType.Rollback
     ]);
   }
 
@@ -250,6 +268,25 @@ export class Parser {
 
     this.finishStatement("Unexpected token after complete DELETE statement");
     return statement;
+  }
+
+  public parseBeginTransactionStatement(): BeginTransactionStatement {
+    this.consume(TokenType.Begin, "Expected BEGIN to start a transaction");
+    this.match(TokenType.Transaction);
+    this.finishStatement("Unexpected token after complete BEGIN statement");
+    return { type: "begin_transaction" };
+  }
+
+  public parseCommitTransactionStatement(): CommitTransactionStatement {
+    this.consume(TokenType.Commit, "Expected COMMIT to finish a transaction");
+    this.finishStatement("Unexpected token after complete COMMIT statement");
+    return { type: "commit_transaction" };
+  }
+
+  public parseRollbackTransactionStatement(): RollbackTransactionStatement {
+    this.consume(TokenType.Rollback, "Expected ROLLBACK to revert a transaction");
+    this.finishStatement("Unexpected token after complete ROLLBACK statement");
+    return { type: "rollback_transaction" };
   }
 
   private parseSelectList(): SelectItem[] {

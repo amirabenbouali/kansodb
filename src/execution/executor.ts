@@ -6,7 +6,10 @@ import type {
   CreateColumnDataType,
   CreateTableStatement,
   DeleteStatement,
+  BeginTransactionStatement,
+  CommitTransactionStatement,
   InsertStatement,
+  RollbackTransactionStatement,
   SelectStatement,
   Statement,
   TableConstraint,
@@ -20,7 +23,8 @@ import type { Table } from "../storage/table.js";
 import { evaluateExpression, evaluateScalar, tableContext } from "./expression-evaluator.js";
 import { JoinExecutor } from "./join-executor.js";
 import type { QueryResult } from "./query-result.js";
-import type { CreateTableResult, DeleteResult, InsertResult, StatementResult, UpdateResult } from "./statement-result.js";
+import type { CreateTableResult, DeleteResult, InsertResult, StatementResult, TransactionResult, UpdateResult } from "./statement-result.js";
+import { TransactionExecutor } from "./transaction-executor.js";
 
 interface ResolvedColumn {
   queryName: string;
@@ -39,6 +43,7 @@ export class Executor {
   public execute(statement: InsertStatement): InsertResult;
   public execute(statement: UpdateStatement): UpdateResult;
   public execute(statement: DeleteStatement): DeleteResult;
+  public execute(statement: BeginTransactionStatement | CommitTransactionStatement | RollbackTransactionStatement): TransactionResult;
   public execute(statement: Statement): StatementResult;
   public execute(statement: Statement): StatementResult {
     switch (statement.type) {
@@ -52,6 +57,10 @@ export class Executor {
         return this.executeUpdate(statement);
       case "delete":
         return this.executeDelete(statement);
+      case "begin_transaction":
+      case "commit_transaction":
+      case "rollback_transaction":
+        return new TransactionExecutor().execute(statement, this.database);
     }
 
     return this.assertNever(statement);

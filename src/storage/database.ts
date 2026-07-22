@@ -2,9 +2,16 @@ import { StorageError } from "../errors/storage-error.js";
 import type { ColumnDefinition } from "./column.js";
 import type { DatabaseValue, InputRow, StoredRow } from "./row.js";
 import { Table } from "./table.js";
+import { cloneDatabaseSnapshot, freezeDatabaseSnapshot, type DatabaseSnapshot, type TransactionState } from "./transaction.js";
+import { TransactionManager } from "./transaction-manager.js";
 
 export class Database {
   private readonly tables = new Map<string, Table>();
+  public readonly transactionManager: TransactionManager;
+
+  public constructor() {
+    this.transactionManager = new TransactionManager(this);
+  }
 
   public createTable(name: string, columns: readonly ColumnDefinition[]): Table {
     this.validateTableName(name);
@@ -125,6 +132,64 @@ export class Database {
     return Array.from(this.tables.values(), (table) => table.name);
   }
 
+  public get transactionState(): TransactionState {
+    return this.transactionManager.state;
+  }
+
+  public get isTransactionActive(): boolean {
+    return this.transactionManager.isActive;
+  }
+
+  public createSnapshot(): DatabaseSnapshot {
+    return freezeDatabaseSnapshot({
+      tables: Array.from(this.tables.values(), (table) => ({
+        name: table.name,
+        columns: table.getSchema(),
+        ...(table.primaryKey === undefined ? {} : { primaryKey: { ...table.primaryKey } }),
+        uniqueConstraints: table.uniqueConstraints.map((constraint) => ({ ...constraint })),
+        foreignKeys: table.foreignKeys.map((foreignKey) => ({ ...foreignKey })),
+        rows: table.getRows()
+      }))
+    });
+  }
+
+  public restoreSnapshot(snapshot: DatabaseSnapshot): void {
+    const clonedSnapshot = cloneDatabaseSnapshot(snapshot);
+    const restoredTables = new Map<string, Table>();
+
+    for (const tableSnapshot of clonedSnapshot.tables) {
+      this.validateTableName(tableSnapshot.name);
+      const key = this.normalizeTableName(tableSnapshot.name);
+      if (restoredTables.has(key)) {
+        throw new StorageError({
+          code: "TABLE_ALREADY_EXISTS",
+          message: `Snapshot contains duplicate table "${tableSnapshot.name}".`,
+          tableName: tableSnapshot.name
+        });
+      }
+
+      const table = new Table(tableSnapshot.name, tableSnapshot.columns);
+      table.replaceRows(tableSnapshot.rows);
+      restoredTables.set(key, table);
+    }
+
+    const currentTables = Array.from(this.tables.entries());
+    this.tables.clear();
+    for (const [key, table] of restoredTables) {
+      this.tables.set(key, table);
+    }
+
+    try {
+      this.validateCompleteDatabaseState();
+    } catch (error) {
+      this.tables.clear();
+      for (const [key, table] of currentTables) {
+        this.tables.set(key, table);
+      }
+      throw error;
+    }
+  }
+
   public dropTable(name: string): void {
     const table = this.getTable(name);
     this.validateIncomingReferences(table, []);
@@ -237,6 +302,16 @@ export class Database {
           referencedColumnName: referencedColumn.name
         });
       }
+    }
+  }
+
+  private validateCompleteDatabaseState(): void {
+    for (const table of this.tables.values()) {
+      this.validateCreateTableConstraints(table);
+    }
+
+    for (const table of this.tables.values()) {
+      this.validateTableState(table, table.getRows());
     }
   }
 

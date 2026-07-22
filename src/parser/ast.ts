@@ -6,7 +6,15 @@ export type SelectableExpression =
   | AggregateExpression;
 export type SelectColumn = SelectableExpression | WildcardSelection;
 export type SelectItem = WildcardSelection | SelectExpressionItem;
-export type Statement = SelectStatement | CreateTableStatement | InsertStatement | UpdateStatement | DeleteStatement;
+export type Statement =
+  | SelectStatement
+  | CreateTableStatement
+  | InsertStatement
+  | UpdateStatement
+  | DeleteStatement
+  | BeginTransactionStatement
+  | CommitTransactionStatement
+  | RollbackTransactionStatement;
 
 export interface SelectStatement {
   type: "select";
@@ -76,6 +84,18 @@ export interface DeleteStatement {
   type: "delete";
   tableName: string;
   where?: Expression;
+}
+
+export interface BeginTransactionStatement {
+  type: "begin_transaction";
+}
+
+export interface CommitTransactionStatement {
+  type: "commit_transaction";
+}
+
+export interface RollbackTransactionStatement {
+  type: "rollback_transaction";
 }
 
 export interface AggregateExpression {

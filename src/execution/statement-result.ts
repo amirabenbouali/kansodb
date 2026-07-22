@@ -1,6 +1,7 @@
 import type { QueryResult } from "./query-result.js";
+import type { TransactionAction, TransactionState } from "../storage/transaction.js";
 
-export type StatementResult = QueryResult | CreateTableResult | InsertResult | UpdateResult | DeleteResult;
+export type StatementResult = QueryResult | CreateTableResult | InsertResult | UpdateResult | DeleteResult | TransactionResult;
 
 export interface CreateTableResult {
   type: "create_table";
@@ -24,4 +25,10 @@ export interface DeleteResult {
   type: "delete";
   tableName: string;
   affectedRows: number;
+}
+
+export interface TransactionResult {
+  type: "transaction";
+  action: TransactionAction;
+  state: TransactionState;
 }

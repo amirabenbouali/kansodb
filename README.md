@@ -1,148 +1,166 @@
 # KansoDB
 
-> A SQL query engine built from scratch in TypeScript.
+> A small SQL query engine and educational database workbench built from scratch in TypeScript.
 
-KansoDB is an educational relational database engine that explores how SQL databases work internally. It implements the query lifecycle in TypeScript, from SQL text to tokens, ASTs, execution, constraints, transactions, and optional JSON-file persistence.
+KansoDB explores how relational databases work internally: SQL text becomes tokens, tokens become typed ASTs, statements execute against in-memory tables, constraints are enforced, transactions can be committed or rolled back, and database state can be saved as versioned JSON.
 
-## Current Features
+The project is intentionally compact. It is built to be readable, inspectable, and useful as a portfolio-quality demonstration of language parsing, database internals, and frontend architecture.
 
-* SQL lexer and recursive-descent parser
-* Basic `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`, joins, grouping, aggregates, aliases, and computed expressions
-* `CREATE TABLE`, `INSERT`, `UPDATE`, and `DELETE`
-* In-memory relational tables with typed columns and rows
-* `PRIMARY KEY`, `UNIQUE`, `NOT NULL`, and foreign-key enforcement
-* Explicit `BEGIN`, `COMMIT`, and `ROLLBACK`
-* Atomic script execution
-* Optional JSON persistence with explicit `SAVE`
-* Startup recovery from interrupted saves
-* TypeScript, Vitest, and modular architecture
+## Screenshots
 
-## In-Memory Usage
+![KansoDB workbench](docs/screenshots/workbench.png)
 
-```ts
-import { Database, executeSql } from "kansodb";
+![KansoDB command palette](docs/screenshots/command-palette.png)
 
-const database = new Database();
+## Product Concept
 
-executeSql(database, `
-  CREATE TABLE users (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL
-  );
-`);
+KansoDB is not a PostgreSQL or SQLite replacement. It is a learning-focused SQL engine where the frontend makes normally hidden steps visible:
 
-executeSql(database, "INSERT INTO users VALUES (1, 'Amira');");
+```text
+SQL Query
+  -> Lexer
+  -> Parser
+  -> AST
+  -> Executor
+  -> Storage
+  -> Result
 ```
 
-## File-Backed Usage
+The workbench is designed around that idea: write SQL, execute it against the local engine, inspect tokens and ASTs, review history, and see structured errors without leaving the browser.
 
-```ts
-import { Database } from "kansodb";
+## Supported SQL
 
-const database = await Database.open({
-  path: "./data/kanso.db.json",
-  autoSave: "on-commit"
-});
+Current engine support includes:
 
-await database.executeSql(`
-  CREATE TABLE users (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL
-  );
-`);
+* `SELECT`
+* `WHERE`
+* `ORDER BY`
+* `LIMIT`
+* joins, including `INNER JOIN` and `LEFT JOIN`
+* grouping and aggregate expressions
+* aliases and computed expressions
+* `CREATE TABLE`
+* `INSERT`
+* `UPDATE`
+* `DELETE`
+* `BEGIN`
+* `COMMIT`
+* `ROLLBACK`
+* `SAVE`
 
-await database.executeSql("INSERT INTO users VALUES (1, 'Amira');");
-await database.executeSql("SAVE;");
-```
+Supported storage features include typed columns, rows, `PRIMARY KEY`, `UNIQUE`, `NOT NULL`, foreign keys, explicit transactions, atomic scripts, and JSON persistence.
 
-Opening a missing path creates an empty in-memory database associated with that path. The file is created only after `SAVE` or an enabled auto-save writes it.
+## Frontend Workbench
 
-## Persistence
+The frontend is a Vite React application in `frontend/`.
 
-KansoDB persists the logical database state:
+Key features:
 
-* storage format version
-* table names
-* column names, types, and nullability
-* primary keys, unique constraints, and foreign keys
-* rows
+* Monaco SQL editor
+* query tabs with local browser persistence
+* real execution through `LocalKansoClient`
+* result rendering for queries, mutations, schema changes, transactions, persistence, and scripts
+* engine inspection for tokens, ASTs, operators, storage events, and result summaries
+* schema explorer
+* query history
+* structured error review
+* transaction and persistence controls
+* first-run onboarding
+* command palette
+* local UI preferences
 
-It does not persist parser objects, executors, file handles, transaction snapshots, or execution history.
+## Engine Adapter
 
-The storage format is versioned JSON:
+Frontend code depends on the `KansoClient` interface rather than backend classes throughout the UI.
 
-```json
-{
-  "format": "kansodb",
-  "version": 1,
-  "savedAt": "2026-07-22T00:00:00.000Z",
-  "database": {
-    "tables": []
-  }
-}
-```
+The local implementation is `LocalKansoClient`, which wraps the TypeScript engine directly and maps backend objects into frontend-safe view models. Backend imports are kept inside `frontend/src/engine/`.
 
-## Saving
+## Persistence Runtime
 
-Use SQL:
+The portfolio frontend runs in the browser. It does not pretend Node filesystem paths are available.
+
+Browser persistence uses a browser-compatible file adapter backed by local storage. The workbench displays this limitation and keeps File System Access API usage capability-gated for future import/export work.
+
+In Node usage, `Database.open({ path })` uses the Node file adapter and writes versioned JSON files.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl/Cmd + K` | Open command palette |
+| `Ctrl/Cmd + Enter` | Execute current query |
+| `Ctrl/Cmd + T` | New query tab |
+| `Ctrl/Cmd + W` | Close current query tab |
+| `Ctrl/Cmd + S` | Save current query tab locally |
+
+## Example Queries
 
 ```sql
-SAVE;
+SELECT name, salary
+FROM employees
+ORDER BY name ASC
+LIMIT 8;
 ```
 
-Or the API:
-
-```ts
-await database.save();
+```sql
+SELECT e.name, d.name AS department, o.city AS office
+FROM employees e
+INNER JOIN departments d ON e.department_id = d.id
+INNER JOIN offices o ON e.office_id = o.id
+ORDER BY e.name ASC;
 ```
-
-`SAVE` is rejected while an explicit transaction is active, because persistence represents committed database state only.
-
-## Auto-Save
-
-```ts
-type AutoSaveMode = "off" | "on-commit" | "after-mutation";
-```
-
-* `off`: only explicit `SAVE` or `database.save()` writes to disk.
-* `on-commit`: saves after successful standalone mutations, explicit `COMMIT`, and successful atomic scripts.
-* `after-mutation`: saves after successful standalone mutations and once after transaction commit.
-
-If auto-save fails after an in-memory commit, the memory state remains committed and the database is marked dirty so callers can retry `SAVE`.
-
-## Transactions
 
 ```sql
 BEGIN;
-UPDATE accounts SET balance = balance - 100 WHERE id = 1;
-UPDATE accounts SET balance = balance + 100 WHERE id = 2;
-COMMIT;
+UPDATE employees SET salary = 1 WHERE name = 'Amira Rahman';
+ROLLBACK;
+SELECT name, salary FROM employees WHERE name = 'Amira Rahman';
 ```
-
-Rollback restores the full in-memory database snapshot captured at `BEGIN`, including schemas, rows, and constraints. Nested transactions and savepoints are intentionally not supported.
-
-## Recovery
-
-Saves use:
-
-```text
-database.json.tmp
-database.json.bak
-```
-
-On startup, KansoDB validates candidates before promotion. It can recover from interrupted saves using a valid temporary or backup file. Corrupt files are not silently replaced with an empty database.
-
-## Limitations
-
-KansoDB currently assumes a single process and a single writer per database file. It does not implement locking, write-ahead logging, crash recovery beyond safe replacement, migrations, indexes, query planning, server APIs, authentication, encryption, replication, a CLI, or a frontend.
 
 ## Development
 
 ```bash
+npm install
 npm test
+npm run lint
 npm run typecheck
 npm run build
+npm run frontend
+npm run frontend:typecheck
+npm run frontend:build
 ```
+
+Open the frontend at the Vite URL printed by `npm run frontend`, usually `http://127.0.0.1:5173/`.
+
+## Demo Path
+
+For the public showcase, use the bundled **KansoDB Sample Workspace**, a small Acme Corporation database with offices, departments, employees, clients, projects, assignments, tasks, salaries, and audit events.
+
+1. Launch the frontend.
+2. Choose **Open Demo Workspace**.
+3. Run the sample query tabs in this order: Basic select, High salaries, Department payroll, Employees by department, Foreign key violation, Rollback salary change.
+4. Open **Engine** or **History** to inspect tokens, AST, executor operators, storage events, and result summaries.
+5. Use **Save DB** to persist the browser-backed example database.
+
+The bundled SQL lives in `examples/demo-workspace/demo.sql`, and the curated query set lives in `examples/demo-workspace/demo-queries.sql`.
+
+The Engine view is driven by the local execution trace returned from `LocalKansoClient`; displayed durations, stage states, operators, storage events, and result summaries are not mock metrics.
+
+## Limitations
+
+KansoDB currently does not implement indexes, query planning, `EXPLAIN`, migrations, server APIs, authentication, encryption, replication, concurrent writers, full SQL compatibility, or production-grade filesystem locking.
+
+The frontend does not add fake SQL features. If the engine does not support a statement, the workbench shows the real structured backend error.
+
+## Roadmap
+
+* Portfolio deployment
+* Import/export for browser-backed database files
+* Better visual screenshots and docs site
+* Query planner and `EXPLAIN`
+* Indexes
+* Additional SQL expressions
+* CLI polish
 
 ## License
 

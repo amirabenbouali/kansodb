@@ -1,5 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { demoWorkspaceDatabaseName } from "../../../../src/examples/demo-workspace.js";
 import type { SchemaProvider } from "./schemaProvider";
 import { SchemaEmptyState } from "./SchemaEmptyState";
 import { SchemaSearch } from "./SchemaSearch";
@@ -86,10 +87,10 @@ export function SchemaExplorer({ onInsertSql, provider, refreshToken }: SchemaEx
       <div className="schema-explorer-heading">
         <div>
           <h2>Database Schema</h2>
-          <p>{schema?.databaseName ?? "company.db"} · {tableCount} tables</p>
+          <p>{schema?.databaseName ?? demoWorkspaceDatabaseName} · {tableCount} tables</p>
         </div>
         <button className="schema-refresh-button" type="button" onClick={() => void loadSchema()} aria-label="Refresh schema">
-          <RefreshCw size={15} aria-hidden="true" />
+          <RefreshCw size={13} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>
 

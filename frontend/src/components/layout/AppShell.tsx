@@ -5,6 +5,7 @@ import { StatusBar } from "./StatusBar";
 import type { KansoClient, KansoSessionState } from "../../engine/KansoClient";
 import type { EditorInsertionRequest } from "../../features/editor/queryTabTypes";
 import type { useQueryHistory } from "../../features/history/useQueryHistory";
+import type { UiPreferences } from "../../features/settings/uiPreferences";
 import type { InspectorTab, NavigationKey } from "../../types/ui";
 
 interface AppShellProps {
@@ -13,6 +14,7 @@ interface AppShellProps {
   databaseName: string;
   engineState: string;
   editorInsertionRequest: EditorInsertionRequest | null;
+  exampleLoadToken: number;
   kansoClient: KansoClient;
   mode: string;
   onInspectorTabChange: (tab: InspectorTab) => void;
@@ -21,8 +23,10 @@ interface AppShellProps {
   onSchemaRefresh: () => void;
   onSessionStateChange: (state: KansoSessionState) => void;
   onSessionStateRefresh: () => void;
+  onUiPreferencesChange: (patch: Partial<UiPreferences>) => void;
+  onUiPreferencesReset: () => void;
+  preferences: UiPreferences;
   queryHistory: ReturnType<typeof useQueryHistory>;
-  rightPanelVisible: boolean;
   schemaRefreshToken: number;
   sessionState: KansoSessionState;
   version: string;
@@ -34,6 +38,7 @@ export function AppShell({
   databaseName,
   engineState,
   editorInsertionRequest,
+  exampleLoadToken,
   kansoClient,
   mode,
   onInspectorTabChange,
@@ -42,30 +47,48 @@ export function AppShell({
   onSchemaRefresh,
   onSessionStateChange,
   onSessionStateRefresh,
+  onUiPreferencesChange,
+  onUiPreferencesReset,
+  preferences,
   queryHistory,
-  rightPanelVisible,
   schemaRefreshToken,
   sessionState,
   version
 }: AppShellProps) {
+  const shellClassName = [
+    "app-shell",
+    preferences.sidebarCollapsed ? "is-sidebar-collapsed" : "",
+    preferences.rightPanelVisible ? "" : "is-right-panel-hidden"
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className="app-shell">
+    <div className={shellClassName}>
       <Sidebar
         activeNavigation={activeNavigation}
+        collapsed={preferences.sidebarCollapsed}
         databaseName={databaseName}
         onNavigate={onNavigate}
+        onToggleSidebar={() => onUiPreferencesChange({ sidebarCollapsed: !preferences.sidebarCollapsed })}
         version={version}
       />
       <Workspace
         activeInspectorTab={activeInspectorTab}
         editorInsertionRequest={editorInsertionRequest}
+        exampleLoadToken={exampleLoadToken}
         activeNavigation={activeNavigation}
         kansoClient={kansoClient}
+        onInsertSql={onInsertSql}
+        onNavigate={onNavigate}
+        onToggleRightPanel={() => onUiPreferencesChange({ rightPanelVisible: !preferences.rightPanelVisible })}
+        preferences={preferences}
         queryHistory={queryHistory}
+        schemaRefreshToken={schemaRefreshToken}
         onInspectorTabChange={onInspectorTabChange}
         onSchemaRefresh={onSchemaRefresh}
         onSessionStateChange={onSessionStateChange}
         onSessionStateRefresh={onSessionStateRefresh}
+        onUiPreferencesChange={onUiPreferencesChange}
+        onUiPreferencesReset={onUiPreferencesReset}
         sessionState={sessionState}
       />
       <RightPanel
@@ -73,11 +96,13 @@ export function AppShell({
         onClearHistory={queryHistory.clearHistory}
         onInsertSql={onInsertSql}
         onInspectHistory={() => onNavigate("history")}
+        onNavigate={onNavigate}
         onRemoveHistoryEntry={queryHistory.removeHistoryEntry}
         schemaProvider={kansoClient}
         schemaRefreshToken={schemaRefreshToken}
         sessionState={sessionState}
-        visible={rightPanelVisible}
+        version={version}
+        visible={preferences.rightPanelVisible}
       />
       <StatusBar
         databaseName={databaseName}

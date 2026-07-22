@@ -18,6 +18,8 @@ const stageLabels: Record<ExecutionTraceStageId, string> = {
 };
 
 export function PipelineStage({ selected, stage, onSelect }: PipelineStageProps) {
+  const stageSummary = stage.durationMs === undefined ? stage.summary ?? stage.status : `${stage.durationMs.toFixed(1)} ms`;
+
   return (
     <button
       className={selected ? `trace-stage is-${stage.status} is-selected` : `trace-stage is-${stage.status}`}
@@ -27,7 +29,7 @@ export function PipelineStage({ selected, stage, onSelect }: PipelineStageProps)
       onClick={() => onSelect(stage.id)}
     >
       <span>{stageLabels[stage.id]}</span>
-      <small>{stage.durationMs === undefined ? stage.summary ?? stage.status : `${stage.durationMs.toFixed(1)} ms`}</small>
+      <small title={stageSummary}>{stageSummary}</small>
       <i className={`stage-dot is-${stage.status}`}>
         {stage.status === "complete" ? <Check size={15} aria-hidden="true" /> : null}
         {stage.status === "failed" ? <X size={15} aria-hidden="true" /> : null}

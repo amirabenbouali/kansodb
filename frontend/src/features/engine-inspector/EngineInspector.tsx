@@ -89,7 +89,7 @@ export function EngineInspector({ error, trace, onSelectSqlRange }: EngineInspec
           </div>
         </aside>
         <section className="trace-content" role="tabpanel">
-          {renderStage(selectedStageId, trace, selectedToken, selectToken)}
+          {renderStage(selectedStageId, trace, error, selectedToken, selectToken)}
         </section>
         <aside className="trace-detail">
           {error === null ? <ResultInspector summary={trace.resultSummary} /> : <ExecutionError error={error} />}
@@ -102,6 +102,7 @@ export function EngineInspector({ error, trace, onSelectSqlRange }: EngineInspec
 function renderStage(
   stageId: ExecutionTraceStageId,
   trace: ExecutionTrace,
+  error: KansoErrorView | null,
   selectedToken: TokenTraceView | null,
   onSelectToken: (token: TokenTraceView) => void
 ) {
@@ -109,7 +110,7 @@ function renderStage(
     case "sql":
       return <ResultInspector summary={{ resultType: trace.resultSummary?.resultType ?? "query" }} />;
     case "lexer":
-      return <TokenInspector tokens={trace.tokens ?? []} selectedToken={selectedToken} onSelectToken={onSelectToken} />;
+      return <TokenInspector tokens={trace.tokens ?? []} error={error} selectedToken={selectedToken} onSelectToken={onSelectToken} />;
     case "parser":
     case "ast":
       return <AstInspector ast={trace.ast} />;

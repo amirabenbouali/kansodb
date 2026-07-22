@@ -6,12 +6,15 @@ import type { EditorInsertionRequest } from "./queryTabTypes";
 
 interface SqlEditorProps {
   diagnosticRange: { start: number; end: number; message: string } | null;
+  editorFontSize: number;
+  editorWordWrap: boolean;
   highlightedRange: { start: number; end: number } | null;
   insertionRequest: EditorInsertionRequest | null;
   onExecute: () => void;
   onNewTab: () => void;
   onSave: () => void;
   onSqlChange: (sql: string) => void;
+  reducedMotion: boolean;
   sql: string;
 }
 
@@ -42,11 +45,14 @@ const editorOptions: editor.IStandaloneEditorConstructionOptions = {
 
 export function SqlEditor({
   diagnosticRange,
+  editorFontSize,
+  editorWordWrap,
   highlightedRange,
   insertionRequest,
   onExecute,
   onNewTab,
   onSave,
+  reducedMotion,
   onSqlChange,
   sql
 }: SqlEditorProps) {
@@ -184,7 +190,14 @@ export function SqlEditor({
         language="sql"
         onChange={(value) => onSqlChange(value ?? "")}
         onMount={handleMount}
-        options={editorOptions}
+        options={{
+          ...editorOptions,
+          cursorBlinking: reducedMotion ? "solid" : "smooth",
+          cursorSmoothCaretAnimation: reducedMotion ? "off" : "on",
+          fontSize: editorFontSize,
+          smoothScrolling: !reducedMotion,
+          wordWrap: editorWordWrap ? "on" : "off"
+        }}
         theme="kanso-dark"
         value={sql}
       />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Database, DataType, ExecutionError, executeSql } from "../../src/index.js";
+import { Database, ExecutionError, executeSql } from "../../src/index.js";
 
 function createEmployeesDatabase(): Database {
   const database = new Database();

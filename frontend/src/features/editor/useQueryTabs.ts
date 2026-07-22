@@ -14,6 +14,7 @@ interface UseQueryTabsResult {
   addTab: (sql?: string) => QueryTab;
   closeTab: (tabId: string) => void;
   getTab: (tabId: string) => QueryTab | undefined;
+  loadTabs: (tabs: Array<{ title: string; sql: string }>) => void;
   renameTab: (tabId: string, title: string) => void;
   saveTab: (tabId: string) => void;
   setActiveTabId: (tabId: string) => void;
@@ -112,12 +113,36 @@ export function useQueryTabs(): UseQueryTabsResult {
     [tabs]
   );
 
+  const loadTabs = useCallback((queryTabs: Array<{ title: string; sql: string }>) => {
+    const now = Date.now();
+    const loadedTabs: QueryTab[] = [];
+    for (const [index, tab] of queryTabs.entries()) {
+      loadedTabs.push({
+        id: createUniqueTabId(loadedTabs),
+        title: tab.title.trim().length === 0 ? `Query ${index + 1}` : tab.title,
+        sql: tab.sql,
+        isDirty: false,
+        createdAt: now + index,
+        updatedAt: now + index,
+        execution: null
+      });
+    }
+
+    if (loadedTabs.length === 0) {
+      return;
+    }
+
+    setTabs(loadedTabs);
+    setActiveTabIdState(loadedTabs[0]?.id ?? null);
+  }, []);
+
   return {
     activeTab,
     activeTabId,
     addTab,
     closeTab,
     getTab,
+    loadTabs,
     renameTab,
     saveTab,
     setActiveTabId,

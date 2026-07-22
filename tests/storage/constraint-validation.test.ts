@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Database, DataType, StorageError, type ColumnDefinition } from "../../src/index.js";
+import { Database, DataType, StorageError } from "../../src/index.js";
 
 function expectStorageError(action: () => unknown, code: string): StorageError {
   try {

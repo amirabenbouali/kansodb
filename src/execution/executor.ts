@@ -20,7 +20,7 @@ import type {
 import type { ColumnDefinition } from "../storage/column.js";
 import type { Database } from "../storage/database.js";
 import { DataType } from "../storage/data-type.js";
-import type { DatabaseValue, InputRow, StoredRow } from "../storage/row.js";
+import type { InputRow } from "../storage/row.js";
 import type { Table } from "../storage/table.js";
 import { evaluateExpression, evaluateScalar, tableContext } from "./expression-evaluator.js";
 import { JoinExecutor } from "./join-executor.js";

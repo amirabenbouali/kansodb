@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AutoSaveModeView, KansoClient, KansoSessionState, TransactionStateView } from "../../engine/KansoClient";
+import type { AutoSaveModeView, KansoClient, KansoSessionState } from "../../engine/KansoClient";
 import type { InspectorTab, NavigationKey } from "../../types/ui";
+import { CommandPalette } from "../../features/commands/CommandPalette";
+import type { CommandAction } from "../../features/commands/commandTypes";
 import { EmptyEditor } from "../../features/editor/EmptyEditor";
 import { EditorToolbar } from "../../features/editor/EditorToolbar";
 import { QueryTabs } from "../../features/editor/QueryTabs";
 import { SqlEditor } from "../../features/editor/SqlEditor";
 import type { EditorInsertionRequest, QueryTab } from "../../features/editor/queryTabTypes";
 import { useQueryTabs } from "../../features/editor/useQueryTabs";
-import { EngineInspector } from "../../features/engine-inspector/EngineInspector";
+import { EngineView } from "../../features/engine/EngineView";
+import { TokenInspector } from "../../features/engine-inspector/TokenInspector";
 import { ExecutionPanel } from "../../features/execution/ExecutionPanel";
 import { useQueryExecution } from "../../features/execution/useQueryExecution";
 import { QueryHistoryPage } from "../../features/history/QueryHistoryPage";
 import { createHistoryDetail, createHistoryEntry } from "../../features/history/historyTypes";
 import type { useQueryHistory } from "../../features/history/useQueryHistory";
+import { ScriptsNavigationPage, TablesNavigationPage } from "../../features/navigation/NavigationPages";
+import { exampleQueries } from "../../features/onboarding/sampleWorkspace";
 import { AutoSaveSettings } from "../../features/persistence/AutoSaveSettings";
 import { DatabaseMenu } from "../../features/persistence/DatabaseMenu";
 import { OpenDatabaseDialog } from "../../features/persistence/OpenDatabaseDialog";
@@ -20,20 +25,32 @@ import { PersistenceStatus } from "../../features/persistence/PersistenceStatus"
 import { SaveButton } from "../../features/persistence/SaveButton";
 import { browserPersistenceLimitations } from "../../features/persistence/persistenceCapabilities";
 import { ScriptExecutionOptions } from "../../features/scripts/ScriptExecutionOptions";
+import { SettingsPanel } from "../../features/settings/SettingsPanel";
+import type { UiPreferences } from "../../features/settings/uiPreferences";
 import { TransactionControls } from "../../features/transactions/TransactionControls";
 import { TransactionIndicator } from "../../features/transactions/TransactionIndicator";
+import type { TokenTraceView } from "../../engine/tracing/traceTypes";
 import { TransactionWarningDialog } from "../../features/transactions/TransactionWarningDialog";
+import { ErrorBoundary } from "../shared/ErrorBoundary";
 
 interface WorkspaceProps {
   activeNavigation: NavigationKey;
   activeInspectorTab: InspectorTab;
   editorInsertionRequest: EditorInsertionRequest | null;
+  exampleLoadToken: number;
   kansoClient: KansoClient;
+  onInsertSql: (sql: string) => void;
+  onNavigate: (key: NavigationKey) => void;
+  onToggleRightPanel: () => void;
+  preferences: UiPreferences;
   queryHistory: ReturnType<typeof useQueryHistory>;
+  schemaRefreshToken: number;
   onInspectorTabChange: (tab: InspectorTab) => void;
   onSchemaRefresh: () => void;
   onSessionStateChange: (state: KansoSessionState) => void;
   onSessionStateRefresh: () => void;
+  onUiPreferencesChange: (patch: Partial<UiPreferences>) => void;
+  onUiPreferencesReset: () => void;
   sessionState: KansoSessionState;
 }
 
@@ -41,18 +58,28 @@ export function Workspace({
   activeNavigation,
   activeInspectorTab,
   editorInsertionRequest,
+  exampleLoadToken,
   kansoClient,
+  onInsertSql,
+  onNavigate,
+  onToggleRightPanel,
+  preferences,
   queryHistory,
+  schemaRefreshToken,
   onInspectorTabChange,
   onSchemaRefresh,
   onSessionStateChange,
   onSessionStateRefresh,
+  onUiPreferencesChange,
+  onUiPreferencesReset,
   sessionState
 }: WorkspaceProps) {
   const workbenchRef = useRef<HTMLElement | null>(null);
   const [closeConfirmation, setCloseConfirmation] = useState<QueryTab | null>(null);
   const [highlightedSqlRange, setHighlightedSqlRange] = useState<{ start: number; end: number } | null>(null);
   const [databaseDialogOpen, setDatabaseDialogOpen] = useState(false);
+  const [selectedInspectorToken, setSelectedInspectorToken] = useState<TokenTraceView | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [transactionWarning, setTransactionWarning] = useState<(() => Promise<void>) | null>(null);
   const [atomicScript, setAtomicScript] = useState(false);
   const [stopOnError, setStopOnError] = useState(true);
@@ -63,6 +90,7 @@ export function Workspace({
     addTab,
     closeTab,
     renameTab,
+    loadTabs,
     saveTab,
     setActiveTabId,
     tabs,
@@ -146,6 +174,21 @@ export function Workspace({
     }
   }, [runControlSql, transactionWarning]);
 
+  useEffect(() => {
+    if (exampleLoadToken > 0) {
+      loadTabs(exampleQueries.map(({ title, sql }) => ({ title, sql })));
+    }
+  }, [exampleLoadToken, loadTabs]);
+
+  useEffect(() => {
+    setSelectedInspectorToken(null);
+  }, [activeTabId, activeTab?.execution?.executedSql]);
+
+  const selectInspectorToken = useCallback((token: TokenTraceView) => {
+    setSelectedInspectorToken(token);
+    setHighlightedSqlRange(token.start === token.end ? null : { start: token.start, end: token.end });
+  }, []);
+
   const requestCloseTab = useCallback((tab: QueryTab) => {
     if (tab.isDirty) {
       setCloseConfirmation(tab);
@@ -192,6 +235,12 @@ export function Workspace({
         return;
       }
 
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+
       const activeElement = document.activeElement;
       if (activeElement !== null && !workbenchRef.current.contains(activeElement)) {
         return;
@@ -224,6 +273,24 @@ export function Workspace({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTab, addAndFocusTab, handleExecute, handleSave, requestCloseTab]);
 
+  useEffect(() => {
+    void kansoClient.setAutoSaveMode(preferences.autoSaveMode).then(onSessionStateChange);
+  }, [kansoClient, onSessionStateChange, preferences.autoSaveMode]);
+
+  const commands: CommandAction[] = [
+    { id: "new-query", label: "New query", group: "Editor", shortcut: "Ctrl/Cmd T", run: addAndFocusTab },
+    { id: "execute-query", label: "Execute query", group: "Editor", shortcut: "Ctrl/Cmd Enter", run: () => void handleExecute() },
+    { id: "open-database", label: "Open database", group: "Database", run: () => setDatabaseDialogOpen(true) },
+    { id: "save-database", label: "Save database", group: "Database", run: () => void runControlSql("SAVE;") },
+    { id: "show-tables", label: "Show tables", group: "Navigation", run: () => onNavigate("tables") },
+    { id: "show-engine", label: "Show engine", group: "Navigation", run: () => onNavigate("engine") },
+    { id: "begin-transaction", label: "Begin transaction", group: "Transaction", run: () => void runControlSql("BEGIN;") },
+    { id: "commit-transaction", label: "Commit transaction", group: "Transaction", run: () => void runControlSql("COMMIT;") },
+    { id: "rollback-transaction", label: "Rollback transaction", group: "Transaction", run: () => void runControlSql("ROLLBACK;") },
+    { id: "toggle-right-panel", label: "Toggle right panel", group: "View", run: onToggleRightPanel },
+    { id: "open-settings", label: "Open settings", group: "Navigation", run: () => onNavigate("settings") }
+  ];
+
   if (activeNavigation === "history") {
     return (
       <QueryHistoryPage
@@ -238,8 +305,49 @@ export function Workspace({
     );
   }
 
+  if (activeNavigation === "settings") {
+    return (
+      <main className="workspace page-workspace" ref={workbenchRef}>
+        <SettingsPanel preferences={preferences} onChange={onUiPreferencesChange} onReset={onUiPreferencesReset} />
+        <CommandPalette commands={commands} open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+      </main>
+    );
+  }
+
+  if (activeNavigation === "tables") {
+    return (
+      <TablesNavigationPage
+        provider={kansoClient}
+        refreshToken={schemaRefreshToken}
+        onInsertSql={(sql) => {
+          onInsertSql(sql);
+          onNavigate("console");
+        }}
+      />
+    );
+  }
+
+  if (activeNavigation === "scripts") {
+    return (
+      <ScriptsNavigationPage
+        atomic={atomicScript}
+        stopOnError={stopOnError}
+        onAtomicChange={setAtomicScript}
+        onStopOnErrorChange={setStopOnError}
+        onLoadScript={(sql) => {
+          replaceCurrentSql(sql);
+          onNavigate("console");
+        }}
+      />
+    );
+  }
+
   return (
     <main className="workspace" ref={workbenchRef}>
+      <span className="sr-only" aria-live="polite">
+        {activeTab?.execution?.status === "success" ? "Execution completed successfully." : null}
+        {activeTab?.execution?.status === "error" ? `Execution failed: ${activeTab.execution.error?.message ?? "Unknown error"}` : null}
+      </span>
       <QueryTabs
         activeTabId={activeTabId}
         closeConfirmation={closeConfirmation}
@@ -258,17 +366,22 @@ export function Workspace({
         ) : (
           <>
             <div className="editor-surface">
-              <SqlEditor
-                diagnosticRange={errorDiagnosticRange(activeTab.execution)}
-                insertionRequest={editorInsertionRequest}
-                highlightedRange={highlightedSqlRange ?? errorHighlightRange(activeTab.execution)}
-                key={activeTab.id}
-                onExecute={handleExecute}
-                onNewTab={addAndFocusTab}
-                onSave={handleSave}
-                onSqlChange={(sql) => updateTabSql(activeTab.id, sql)}
-                sql={activeTab.sql}
-              />
+              <ErrorBoundary label="Editor">
+                <SqlEditor
+                  diagnosticRange={errorDiagnosticRange(activeTab.execution)}
+                  editorFontSize={preferences.editorFontSize}
+                  editorWordWrap={preferences.editorWordWrap}
+                  insertionRequest={editorInsertionRequest}
+                  highlightedRange={highlightedSqlRange ?? errorHighlightRange(activeTab.execution)}
+                  key={activeTab.id}
+                  onExecute={handleExecute}
+                  onNewTab={addAndFocusTab}
+                  onSave={handleSave}
+                  onSqlChange={(sql) => updateTabSql(activeTab.id, sql)}
+                  reducedMotion={preferences.reducedMotion}
+                  sql={activeTab.sql}
+                />
+              </ErrorBoundary>
             </div>
             <EditorToolbar
               canExecute={activeTab.sql.trim().length > 0}
@@ -277,58 +390,69 @@ export function Workspace({
               onExecute={handleExecute}
               onSave={handleSave}
             />
+            <details className="workbench-controls">
+              <summary>
+                <span>{sessionState.persistence.storageKind === "browser-file" ? "Browser file" : "In-memory"}</span>
+                <strong>{sessionState.transactionState === "ACTIVE" ? "Transaction active" : "Ready"}</strong>
+              </summary>
+              <div className="session-control-panel">
+                <TransactionIndicator state={sessionState.transactionState} />
+                <TransactionControls
+                  disabled={running}
+                  state={sessionState.transactionState}
+                  onBegin={() => void runControlSql("BEGIN;")}
+                  onCommit={() => void runControlSql("COMMIT;")}
+                  onRollback={() => void runControlSql("ROLLBACK;")}
+                />
+                <PersistenceStatus persistence={sessionState.persistence} transactionState={sessionState.transactionState} />
+                <div className="compact-control-row">
+                  <SaveButton
+                    persistence={sessionState.persistence}
+                    running={running}
+                    transactionState={sessionState.transactionState}
+                    onSave={() => void runControlSql("SAVE;")}
+                  />
+                  <DatabaseMenu
+                    persistence={sessionState.persistence}
+                    onCreateFile={() => withTransactionSafeguard(async () => {
+                      await applySessionChange(() => kansoClient.createFileBackedDatabase(`database-${Date.now()}.db.json`));
+                    })}
+                    onCreateMemory={() => withTransactionSafeguard(async () => {
+                      await applySessionChange(() => kansoClient.createInMemoryDatabase());
+                    })}
+                    onOpen={() => withTransactionSafeguard(async () => setDatabaseDialogOpen(true))}
+                  />
+                </div>
+                <AutoSaveSettings
+                  disabled={running}
+                  mode={sessionState.persistence.autoSave}
+                  onChange={(mode: AutoSaveModeView) => {
+                    void kansoClient.setAutoSaveMode(mode).then(onSessionStateChange);
+                  }}
+                />
+                <ScriptExecutionOptions
+                  atomic={atomicScript}
+                  stopOnError={stopOnError}
+                  onAtomicChange={setAtomicScript}
+                  onStopOnErrorChange={setStopOnError}
+                />
+                <p className="runtime-note">{browserPersistenceLimitations(sessionState.persistence.capabilities)}</p>
+              </div>
+            </details>
             {saveMessage !== null ? <span className="save-toast" role="status">{saveMessage}</span> : null}
           </>
         )}
       </section>
 
-      <section className="session-strip" aria-label="Database session controls">
-        <TransactionIndicator state={sessionState.transactionState} />
-        <TransactionControls
-          disabled={running}
-          state={sessionState.transactionState}
-          onBegin={() => void runControlSql("BEGIN;")}
-          onCommit={() => void runControlSql("COMMIT;")}
-          onRollback={() => void runControlSql("ROLLBACK;")}
-        />
-        <PersistenceStatus persistence={sessionState.persistence} transactionState={sessionState.transactionState} />
-        <SaveButton
-          persistence={sessionState.persistence}
-          running={running}
-          transactionState={sessionState.transactionState}
-          onSave={() => void runControlSql("SAVE;")}
-        />
-        <DatabaseMenu
-          persistence={sessionState.persistence}
-          onCreateFile={() => withTransactionSafeguard(async () => {
-            await applySessionChange(() => kansoClient.createFileBackedDatabase(`database-${Date.now()}.db.json`));
-          })}
-          onCreateMemory={() => withTransactionSafeguard(async () => {
-            await applySessionChange(() => kansoClient.createInMemoryDatabase());
-          })}
-          onOpen={() => withTransactionSafeguard(async () => setDatabaseDialogOpen(true))}
-        />
-        <AutoSaveSettings
-          disabled={running}
-          mode={sessionState.persistence.autoSave}
-          onChange={(mode: AutoSaveModeView) => {
-            void kansoClient.setAutoSaveMode(mode).then(onSessionStateChange);
-          }}
-        />
-        <ScriptExecutionOptions
-          atomic={atomicScript}
-          stopOnError={stopOnError}
-          onAtomicChange={setAtomicScript}
-          onStopOnErrorChange={setStopOnError}
-        />
-        <p className="runtime-note">{browserPersistenceLimitations(sessionState.persistence.capabilities)}</p>
-      </section>
-
-      <EngineInspector
-        error={activeTab?.execution?.error ?? null}
-        trace={activeTab?.execution?.trace ?? null}
-        onSelectSqlRange={setHighlightedSqlRange}
-      />
+      {activeNavigation === "engine" ? (
+        <ErrorBoundary label="Engine inspector">
+          <EngineView
+            execution={activeTab?.execution}
+            running={activeTab !== null && runningTabId === activeTab.id}
+            onSelectSqlRange={setHighlightedSqlRange}
+          />
+        </ErrorBoundary>
+      ) : null}
 
       <section className="inspector">
         <div className="inspector-tabs" role="tablist" aria-label="Inspector tabs">
@@ -352,19 +476,22 @@ export function Workspace({
           </button>
         </div>
         {activeInspectorTab === "tokens" ? (
-          <div className="placeholder-grid">
-            {["SELECT", "IDENTIFIER", "FROM", "JOIN", "WHERE"].map((token) => (
-              <span className="placeholder-token" key={token}>
-                {token}
-              </span>
-            ))}
-          </div>
+          <ErrorBoundary label="Token inspector">
+            <TokenInspector
+              error={activeTab?.execution?.error ?? null}
+              selectedToken={selectedInspectorToken}
+              tokens={activeTab?.execution?.trace?.tokens ?? []}
+              onSelectToken={selectInspectorToken}
+            />
+          </ErrorBoundary>
         ) : (
-          <ExecutionPanel
-            running={activeTab !== null && runningTabId === activeTab.id}
-            snapshot={activeTab?.execution ?? null}
-            transactionActive={sessionState.transactionState === "ACTIVE"}
-          />
+          <ErrorBoundary label="Result panel">
+            <ExecutionPanel
+              running={activeTab !== null && runningTabId === activeTab.id}
+              snapshot={activeTab?.execution ?? null}
+              transactionActive={sessionState.transactionState === "ACTIVE"}
+            />
+          </ErrorBoundary>
         )}
       </section>
 
@@ -391,6 +518,7 @@ export function Workspace({
         onCancel={() => setTransactionWarning(null)}
         onRollback={() => void rollbackThenContinue()}
       />
+      <CommandPalette commands={commands} open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
     </main>
   );
 }

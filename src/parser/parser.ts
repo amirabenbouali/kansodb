@@ -22,7 +22,6 @@ import type {
   OrderByItem,
   RollbackTransactionStatement,
   SaveDatabaseStatement,
-  SelectColumn,
   SelectItem,
   SelectExpressionItem,
   SelectStatement,
@@ -816,27 +815,6 @@ export class Parser {
       TokenType.TextType,
       TokenType.BooleanType
     ]);
-  }
-
-  private parseNullability(): boolean {
-    if (this.match(TokenType.Null)) {
-      this.rejectAdditionalNullability();
-      return true;
-    }
-
-    if (this.match(TokenType.Not)) {
-      this.consume(TokenType.Null, "Expected NULL after NOT");
-      this.rejectAdditionalNullability();
-      return false;
-    }
-
-    return false;
-  }
-
-  private rejectAdditionalNullability(): void {
-    if (this.check(TokenType.Null) || this.check(TokenType.Not)) {
-      throw new ParserError("Conflicting nullability modifier", this.peek(), [TokenType.Comma, TokenType.RightParen]);
-    }
   }
 
   private parseInsertColumns(): string[] {

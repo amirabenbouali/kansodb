@@ -12,7 +12,7 @@ interface UseExecutionTraceResult {
 }
 
 export function useExecutionTrace(trace: ExecutionTrace | null): UseExecutionTraceResult {
-  const [selectedStageId, setSelectedStageId] = useState<ExecutionTraceStageId>("results");
+  const [selectedStageId, setSelectedStageId] = useState<ExecutionTraceStageId>("executor");
   const [selectedToken, setSelectedToken] = useState<TokenTraceView | null>(null);
 
   const availableStageIds = useMemo(
@@ -22,13 +22,14 @@ export function useExecutionTrace(trace: ExecutionTrace | null): UseExecutionTra
 
   useEffect(() => {
     if (trace === null) {
-      setSelectedStageId("results");
+      setSelectedStageId("executor");
       setSelectedToken(null);
       return;
     }
 
     const failedStage = trace.stages.find((stage) => stage.status === "failed");
-    setSelectedStageId(failedStage?.id ?? "results");
+    const hasExecutorStage = trace.stages.some((stage) => stage.id === "executor");
+    setSelectedStageId(failedStage?.id ?? (hasExecutorStage ? "executor" : "results"));
   }, [trace]);
 
   const moveStage = useCallback((direction: -1 | 1) => {

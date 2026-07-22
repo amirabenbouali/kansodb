@@ -16,7 +16,11 @@ export function OperatorTree({ operators }: OperatorTreeProps) {
         <h3>Executor Operators</h3>
         <span>{operators.length} root nodes</span>
       </div>
-      {operators.map((operator) => <OperatorNode key={operator.id} node={operator} />)}
+      <div className="operator-tree-scroll" tabIndex={0} aria-label="Scrollable executor operators">
+        <div className="operator-tree-canvas">
+          {operators.map((operator) => <OperatorNode key={operator.id} node={operator} />)}
+        </div>
+      </div>
     </div>
   );
 }

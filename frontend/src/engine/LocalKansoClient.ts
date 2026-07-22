@@ -1,6 +1,7 @@
 import { executeSqlAsync } from "../../../src/execution/executor.ts";
 import { executeSqlScriptAsync } from "../../../src/execution/script-executor.ts";
 import type { ScriptExecutionOptions } from "../../../src/execution/script-result.ts";
+import { demoWorkspaceDatabaseName, demoWorkspaceSql } from "../../../src/examples/demo-workspace.js";
 import type { FileAdapter } from "../../../src/persistence/file-adapter.ts";
 import { Database } from "../../../src/storage/database.ts";
 import type { DatabaseSchemaView } from "../features/schema/schemaTypes";
@@ -23,8 +24,8 @@ import {
   resultSummary
 } from "./tracing/traceMapper";
 
-const DATABASE_NAME = "company.db";
-const DATABASE_PATH = "company.db";
+const DATABASE_NAME = demoWorkspaceDatabaseName;
+const DATABASE_PATH = demoWorkspaceDatabaseName;
 const BROWSER_DATABASE_INDEX_KEY = "kansodb.browserDatabases.v1";
 
 export class LocalKansoClient implements KansoClient {
@@ -174,6 +175,15 @@ export class LocalKansoClient implements KansoClient {
     return this.getSessionState();
   }
 
+  public async loadExampleDatabase(): Promise<KansoSessionState> {
+    rememberBrowserDatabase(DATABASE_PATH);
+    this.databaseName = DATABASE_PATH;
+    this.storageKind = "browser-file";
+    await this.fileAdapter.remove(DATABASE_PATH);
+    this.databaseReady = createSeededDatabase(this.fileAdapter);
+    return this.getSessionState();
+  }
+
   public async openDatabase(name: string): Promise<KansoSessionState> {
     const path = normalizeBrowserDatabaseName(name);
     rememberBrowserDatabase(path);
@@ -299,45 +309,7 @@ async function createSeededDatabase(fileAdapter: FileAdapter): Promise<Database>
     return database;
   }
 
-  await executeSqlScriptAsync(database, `
-    CREATE TABLE departments (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      active BOOLEAN NOT NULL
-    );
-
-    CREATE TABLE employees (
-      id INTEGER PRIMARY KEY,
-      email TEXT UNIQUE NULL,
-      name TEXT NOT NULL,
-      department_id INTEGER NULL,
-      salary DECIMAL,
-      active BOOLEAN NOT NULL,
-      FOREIGN KEY (department_id) REFERENCES departments(id)
-    );
-
-    CREATE TABLE salaries (
-      id INTEGER PRIMARY KEY,
-      employee_id INTEGER NOT NULL,
-      amount DECIMAL NOT NULL,
-      paid_at TEXT NOT NULL,
-      FOREIGN KEY (employee_id) REFERENCES employees(id)
-    );
-
-    INSERT INTO departments VALUES (1, 'Engineering', TRUE);
-    INSERT INTO departments VALUES (2, 'Design', TRUE);
-    INSERT INTO departments VALUES (3, 'Operations', FALSE);
-
-    INSERT INTO employees VALUES (1, 'amira@example.com', 'Amira', 1, 48000, TRUE);
-    INSERT INTO employees VALUES (2, 'maya@example.com', 'Maya', 2, 42000.5, TRUE);
-    INSERT INTO employees VALUES (3, NULL, 'Noah', 1, 52000, FALSE);
-    INSERT INTO employees VALUES (4, NULL, 'Lina', NULL, 45000, TRUE);
-
-    INSERT INTO salaries VALUES (1, 1, 48000, '2026-01-31');
-    INSERT INTO salaries VALUES (2, 2, 42000.5, '2026-01-31');
-    INSERT INTO salaries VALUES (3, 3, 52000, '2026-01-31');
-    INSERT INTO salaries VALUES (4, 4, 45000, '2026-01-31');
-  `, { atomic: true });
+  await executeSqlScriptAsync(database, demoWorkspaceSql, { atomic: true });
 
   return database;
 }

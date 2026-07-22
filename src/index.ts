@@ -1,6 +1,7 @@
 export { Lexer, tokenize } from "./lexer/lexer.js";
 export { KEYWORDS, type Token, type TokenLiteral, TokenType } from "./lexer/token.js";
 export { ExecutionError, type ExecutionErrorCode, type ExecutionErrorOptions } from "./errors/execution-error.js";
+export { demoQueries, demoWorkspaceDatabaseName, demoWorkspaceDescription, demoWorkspaceName, demoWorkspaceSql, type DemoQuery } from "./examples/demo-workspace.js";
 export { LexerError } from "./errors/lexer-error.js";
 export { Parser, parseSelectStatement } from "./parser/parser.js";
 export { ParserError } from "./errors/parser-error.js";

@@ -1,6 +1,6 @@
 {
   "name": "kansodb",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "A small SQL query engine built from scratch in TypeScript.",
   "type": "module",
   "main": "dist/index.js",
@@ -9,6 +9,7 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "npm run typecheck && npm run frontend:typecheck",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "frontend": "vite --config frontend/vite.config.ts --host 127.0.0.1",

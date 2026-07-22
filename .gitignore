@@ -4,3 +4,18 @@ dist-frontend/
 
 .DS_Store
 coverage/
+
+# Local environment and database files
+.env
+.env.*
+!.env.example
+*.db
+*.db.json
+*.sqlite
+*.sqlite3
+*.kansodb.json
+
+# Local logs and temporary exports
+*.log
+*.tmp
+*.temp

@@ -34,7 +34,7 @@ export function SchemaTableCard({
           aria-label={`${expanded ? "Collapse" : "Expand"} ${table.name}`}
           onClick={onToggle}
         >
-          <ChevronRight className={expanded ? "disclosure-icon is-open" : "disclosure-icon"} size={15} aria-hidden="true" />
+          <ChevronRight className={expanded ? "disclosure-icon is-open" : "disclosure-icon"} size={13} strokeWidth={2.1} aria-hidden="true" />
         </button>
         <button
           className="schema-name-button schema-table-title"
@@ -58,7 +58,7 @@ export function SchemaTableCard({
           onClick={() => onInsertStarterQuery(table.name)}
           aria-label={`Insert starter query for ${table.name}`}
         >
-          <FilePlus2 size={14} aria-hidden="true" />
+          <FilePlus2 size={12} strokeWidth={2} aria-hidden="true" />
         </button>
       </header>
 

@@ -8,7 +8,6 @@ import { PersistenceError } from "../errors/persistence-error.js";
 import { Lexer } from "../lexer/lexer.js";
 import { ScriptParser, type ParsedScriptStatement } from "../parser/script-parser.js";
 import type { Database } from "../storage/database.js";
-import type { TransactionSnapshot } from "../storage/transaction.js";
 import { Executor } from "./executor.js";
 import {
   cloneScriptExecutionResult,

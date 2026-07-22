@@ -1,4 +1,4 @@
-import { Braces, FileCode2, History, Settings, Table2, TerminalSquare } from "lucide-react";
+import { Braces, FileCode2, History, PanelLeftClose, PanelLeftOpen, Settings, Table2, TerminalSquare } from "lucide-react";
 import { DatabaseSelector } from "../navigation/DatabaseSelector";
 import { NavigationItem } from "../navigation/NavigationItem";
 import type { NavigationItemModel, NavigationKey } from "../../types/ui";
@@ -14,20 +14,24 @@ const navigationItems: NavigationItemModel[] = [
 
 interface SidebarProps {
   activeNavigation: NavigationKey;
+  collapsed: boolean;
   databaseName: string;
   onNavigate: (key: NavigationKey) => void;
+  onToggleSidebar: () => void;
   version: string;
 }
 
-export function Sidebar({ activeNavigation, databaseName, onNavigate, version }: SidebarProps) {
+export function Sidebar({ activeNavigation, collapsed, databaseName, onNavigate, onToggleSidebar, version }: SidebarProps) {
   return (
-    <aside className="sidebar">
+    <aside className={collapsed ? "sidebar is-collapsed" : "sidebar"}>
       <header className="brand">
         <div>
           <h1 className="brand-title">KANSO DB</h1>
           <span className="brand-version">{version}</span>
         </div>
-        <span className="brand-mark" aria-hidden="true" />
+        <button className="sidebar-toggle" type="button" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={onToggleSidebar}>
+          {collapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
+        </button>
       </header>
 
       <div className="sidebar-content">

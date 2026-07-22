@@ -1,4 +1,4 @@
-import { Check, Clipboard, ExternalLink, Eye, FileInput, Trash2, X } from "lucide-react";
+import { CheckCircle2, Clipboard, ExternalLink, Eye, FileInput, Trash2, XCircle } from "lucide-react";
 import type { QueryHistoryEntry } from "./historyTypes";
 
 interface QueryHistoryItemProps {
@@ -23,13 +23,13 @@ export function QueryHistoryItem({
   return (
     <article className={compact ? `history-card is-${entry.status}` : `history-entry is-${entry.status}`}>
       <span className="history-status" aria-hidden="true">
-        {entry.status === "success" ? <Check size={14} /> : <X size={14} />}
+        {entry.status === "success" ? <CheckCircle2 size={16} strokeWidth={2} /> : <XCircle size={16} strokeWidth={2} />}
       </span>
       <div className="history-entry-main">
         <code>{previewSql(entry.sql)}</code>
         <span>{historySummary(entry)} · {formatTimestamp(entry.executedAt)}{entry.durationMs === undefined ? "" : ` · ${entry.durationMs.toFixed(1)} ms`}</span>
       </div>
-      {compact ? <strong>{shortOutcome(entry)}</strong> : (
+      {compact ? <strong className="history-outcome">{shortOutcome(entry)}</strong> : (
         <div className="history-entry-actions">
           <button type="button" aria-label="Inspect history entry" title="Inspect" onClick={() => onInspect(entry.id)}>
             <Eye size={14} aria-hidden="true" />

@@ -1,6 +1,6 @@
 import { PersistenceError } from "../errors/persistence-error.js";
 import { DataType } from "../storage/data-type.js";
-import type { DatabaseValue, StoredRow } from "../storage/row.js";
+import type { DatabaseValue } from "../storage/row.js";
 import type { DatabaseSnapshot, TableSnapshot } from "../storage/transaction.js";
 import {
   CURRENT_STORAGE_FORMAT_VERSION,

@@ -7,14 +7,11 @@ import { Parser } from "../../../../src/parser/parser.ts";
 import { ScriptParser } from "../../../../src/parser/script-parser.ts";
 import type {
   CreateTableStatement,
-  DeleteStatement,
   Expression,
-  InsertStatement,
   OrderByExpression,
   SelectItem,
   SelectStatement,
   Statement,
-  UpdateStatement
 } from "../../../../src/parser/ast.ts";
 import type { DatabaseSnapshot, TableSnapshot } from "../../../../src/storage/transaction.ts";
 import type { KansoExecutionResult, KansoScriptExecutionResult } from "../../features/execution/executionTypes";

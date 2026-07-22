@@ -50,6 +50,7 @@ export interface KansoClient {
   ): Promise<KansoScriptExecutionWithTrace>;
   createInMemoryDatabase(): Promise<KansoSessionState>;
   createFileBackedDatabase(name: string): Promise<KansoSessionState>;
+  loadExampleDatabase(): Promise<KansoSessionState>;
   openDatabase(name: string): Promise<KansoSessionState>;
   getSessionState(): Promise<KansoSessionState>;
   getSchema(): Promise<DatabaseSchemaView>;

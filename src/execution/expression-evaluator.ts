@@ -2,7 +2,7 @@ import { ExecutionError } from "../errors/execution-error.js";
 import type { ArithmeticOperator, ComparisonOperator, Expression, UnaryOperator } from "../parser/ast.js";
 import type { DatabaseValue, StoredRow } from "../storage/row.js";
 import type { Table } from "../storage/table.js";
-import type { JoinedRow, QueryScope, ResolvedScopedColumn } from "./query-scope.js";
+import type { JoinedRow, QueryScope } from "./query-scope.js";
 import { passesPredicate, sqlAnd, sqlOr, truthValueFromBoolean, type TruthValue } from "./truth-value.js";
 
 export interface ScalarContext {
